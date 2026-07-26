@@ -13,6 +13,7 @@ import {
   listingIdentityFingerprint,
   pageTextSignature,
   preflightCacheKey,
+  preflightCacheStillValid,
 } from '../lib/preflight';
 import {
   GetPageTextRequestSchema,
@@ -230,7 +231,7 @@ function readCache(
   const entry = preflightCache.get(key);
   if (!entry) return null;
   // Same listing key + title → reuse (ignore text growth from scroll/lazy load).
-  if (entry.title !== title) return null;
+  if (!preflightCacheStillValid(entry, title)) return null;
   return entry.result;
 }
 

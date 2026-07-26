@@ -51,18 +51,9 @@ const THEME_OPTIONS: Array<{ id: ThemePreference; label: string }> = [
   { id: 'dark', label: 'Dark' },
 ];
 
-const parseLines = (s: string): string[] =>
-  s
-    .split('\n')
-    .map((x) => x.trim())
-    .filter(Boolean);
+import { parseCommaList, parseNewlineList } from '../lib/listParse';
 
-/** Comma-separated lists (e.g. US states). Parse only on Save — not on each keystroke. */
-const parseCommaList = (s: string): string[] =>
-  s
-    .split(',')
-    .map((x) => x.trim())
-    .filter(Boolean);
+const parseLines = parseNewlineList;
 
 function syncProficienciesFromClaims(claims: SkillClaim[]): string[] {
   return claims.filter((c) => c.standing === 'held' && c.skill.trim()).map((c) => c.skill.trim());

@@ -944,6 +944,19 @@ export function listingIdentityFingerprint(args: {
   return `${key}|${title}`;
 }
 
+/** True when content-script cache entry still matches the visible listing (ignore text growth). */
+export function preflightCacheStillValid(
+  entry: { title: string },
+  title: string
+): boolean {
+  return entry.title === title;
+}
+
+/** Whether SPA watch should re-run preflight (identity changed). */
+export function listingIdentityChanged(prevFp: string, nextFp: string): boolean {
+  return Boolean(nextFp) && prevFp !== nextFp;
+}
+
 /** Remote with no worker-residency restriction (nationwide / US-wide / no state residency). */
 export function looksUnrestrictedRemoteResidency(pageText: string): boolean {
   if (looksUsCountryRemoteScope(pageText)) return true;

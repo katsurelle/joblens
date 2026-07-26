@@ -85,4 +85,23 @@ describe('prompts', () => {
     expect(PREFLIGHT_SYSTEM).toMatch(/Remote-US/);
     expect(PREFLIGHT_SYSTEM).toMatch(/INCLUDES every US state/);
   });
+
+  it('preflight system encodes citizenship vs residency and U.S.-based worker', () => {
+    expect(PREFLIGHT_SYSTEM).toMatch(/U\.S\.-based \[job title/);
+    expect(PREFLIGHT_SYSTEM).toMatch(/U\.S\.-based clients/);
+    expect(PREFLIGHT_SYSTEM).toMatch(/workAuthorizationNote/);
+    expect(PREFLIGHT_SYSTEM).toMatch(/never hard_skip on citizenship alone/i);
+    expect(PREFLIGHT_SYSTEM).toMatch(/Never invent clearance/i);
+
+    const gates = buildPreflightHardGates(
+      makeConfig({
+        workAuthorizationNote: 'US citizen, no sponsorship needed',
+        workEligibleRegions: ['TX', 'PA'],
+      })
+    );
+    expect(gates.workAuthorization).toMatchObject({
+      note: 'US citizen, no sponsorship needed',
+    });
+    expect(JSON.stringify(gates.candidateRemoteResidency)).toMatch(/U\.S\.-based/);
+  });
 });

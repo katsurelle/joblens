@@ -54,4 +54,34 @@ describe('messaging', () => {
     expect(res.ok).toBe(true);
     expect(seen).toMatchObject({ type: 'OPEN_SIDE_PANEL', startScan: false });
   });
+
+  it('proposeConfigFromDocs and preflightJd success paths', async () => {
+    mock.sendMessageImpl = (msg, cb) => {
+      const type = (msg as { type?: string }).type;
+      if (type === 'PROPOSE_CONFIG_FROM_DOCS') {
+        cb({ ok: true, data: { summary: 'ok', changes: [] } });
+        return;
+      }
+      if (type === 'PREFLIGHT_JD') {
+        cb({
+          ok: true,
+          data: {
+            preflight: {
+              verdict: 'clear',
+              reasons: ['ok'],
+              sources: ['local'],
+              flags: [],
+            },
+          },
+        });
+        return;
+      }
+      cb({ ok: false, error: 'unexpected' });
+    };
+    const { proposeConfigFromDocs } = await import('./messaging');
+    const prop = await proposeConfigFromDocs({ documentText: 'resume' });
+    expect(prop.ok).toBe(true);
+    const pre = await preflightJd({ url: 'https://x', pageText: 'remote' });
+    expect(pre.ok).toBe(true);
+  });
 });
