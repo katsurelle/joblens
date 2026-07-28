@@ -11,6 +11,10 @@ import {
   EMPLOYMENT_PRIORITY_OPTIONS,
   SKIP_CATEGORY_OPTIONS,
 } from './settingsOptions';
+import {
+  buildResponseLocaleInstruction,
+  responseLocaleFromConfig,
+} from '../i18n/responseLocale';
 
 export const EXTRACTION_SYSTEM = `You extract a professional skills inventory from a candidate's work history.
 
@@ -138,7 +142,9 @@ Apply?:
 - "no" — only when a clear hard disqualifier exists (non-empty dealbreakers, geo excluded, clearance skip gate, pay floor fail when use_floors, scam/shell), not for soft skill gaps alone.
 Keep "rationale" short.
 
-declutteredJD: rewrite the posting compressed and skimmable. Operative qualifications first (Required, then Preferred), then core responsibilities. Remove marketing copy, HR/PR platitudes, awards and accolades, and boilerplate. Keep at most a one-line culture note, and only if material. Do not invent anything; use only what the posting states.`;
+declutteredJD: rewrite the posting compressed and skimmable. Operative qualifications first (Required, then Preferred), then core responsibilities. Remove marketing copy, HR/PR platitudes, awards and accolades, and boilerplate. Keep at most a one-line culture note, and only if material. Do not invent anything; use only what the posting states.
+
+Language: When a RESPONSE_LANGUAGE / UI_CULTURE block is provided in the user message, write all human-readable prose fields in that language. Keep JSON keys and English enumerations (fit.label, apply.verdict, workModel, statuses) unchanged for schema stability.`;
 
 function preferencesPayload(profile: Config): Preferences {
   return profile.preferences ?? DEFAULT_PREFERENCES;
@@ -250,6 +256,9 @@ export function buildAnalysisUser({
       ? `\nPROFILE_EMPTY_HINTS\n${emptyHints.map((h, i) => `  ${i + 1}. ${h}`).join('\n')}\n`
       : '';
 
+  const locale = responseLocaleFromConfig(p.uiCulture);
+  const localeBlock = `\n${buildResponseLocaleInstruction(locale)}\n`;
+
   return `CANDIDATE PROFILE
 Education: ${p.education || '(not set)'}
 Work authorization note: ${p.workAuthorizationNote || '(none)'}
@@ -261,7 +270,7 @@ Onsite/hybrid locations: ${locs || '(none)'}
 Remote work-eligible regions: ${p.workEligibleRegions.join(', ') || '(none)'}
 Skip triggers to check:
 ${skipTriggers.map((t, i) => `  ${i + 1}. ${t}`).join('\n') || '  (none)'}
-${emptyHintsBlock}
+${emptyHintsBlock}${localeBlock}
 PREFERENCES
 ${JSON.stringify(preferencesBlock, null, 2)}
 ${geoBlock}
@@ -338,7 +347,7 @@ Rules:
 - soft = possible concern but not definitive.
 - clear = no hard-gate hits found in the text provided.
 - flags: short machine ids when relevant (e.g. blocked_employer, remote_only, clearance, perm, shell, geo_excluded, skip_category, residency_excluded).
-- Keep reasons to 1–3 short human-readable strings (never camelCase config field names). Prefer wording like "Your remote residency is limited to your configured states" not "workEligibleRegions…".
+- reasons: short human-readable strings in the RESPONSE_LANGUAGE when provided (never camelCase config field names). Prefer wording like "Your remote residency is limited to your configured states" not "workEligibleRegions…".
 - organization: best guess company name if present, else "".
 
 Geography / residency (critical — follow exactly):
@@ -355,20 +364,23 @@ Geography / residency (critical — follow exactly):
 - Short mandatory onsite training / onboarding / orientation (days or weeks) with Remote-primary work → Soft under occasionalTravelAllowance when configured; not a commute hard_skip.
 - clearancePolicy "skip": only hard_skip when the posting clearly requires clearance (e.g. "clearance required", "must have Secret clearance"). Never invent clearance. Bare board UI words or unrelated text are not enough. "flag" → soft when required language is present. "ignore" → no clearance gate.
 - Work authorization / citizenship: "Must be a U.S. Citizen" is NOT a residency region gate. If workAuthorizationNote indicates the candidate is a U.S. citizen (e.g. "US citizen, no sponsorship needed"), treat citizenship as satisfied → clear for that gate. Only hard_skip citizenship when the note clearly conflicts (needs sponsorship / not a citizen). If the note is empty, use soft or unknown — never hard_skip on citizenship alone.
-- reasons: plain English only. Never output camelCase field names, snake_case flag ids, or JSON keys (no workEligibleRegions, remoteOnly, clearancePolicy, residency_excluded, etc.). Never say "residency/eligibility gate".`;
+- reasons: human-readable in RESPONSE_LANGUAGE when provided. Never output camelCase field names, snake_case flag ids, or JSON keys (no workEligibleRegions, remoteOnly, clearancePolicy, residency_excluded, etc.). Never say "residency/eligibility gate".`;
 
 export function buildPreflightUser(args: {
   hardGatesJson: string;
   url: string;
   pageText: string;
   localHintJson?: string;
+  uiCulture?: string | null;
 }): string {
   const local = args.localHintJson
     ? `\nLOCAL_PREFLIGHT (deterministic; do not clear a hard_skip):\n${args.localHintJson}\n`
     : '';
+  const locale = responseLocaleFromConfig(args.uiCulture);
+  const localeBlock = `\n${buildResponseLocaleInstruction(locale)}\n`;
   return `HARD_GATES:
 ${args.hardGatesJson}
-${local}
+${local}${localeBlock}
 URL: ${args.url}
 
 JOB POSTING (truncated for preflight):
@@ -417,6 +429,7 @@ export function buildPreflightHardGates(profile: Config): Record<string, unknown
       rule:
         'U.S. citizenship requirements are work-authorization gates, not residency. If note indicates US citizen → clear citizenship. Hard_skip citizenship only on a clear conflict with the note. Empty note → soft/unknown, not hard_skip.',
     },
+    uiCulture: responseLocaleFromConfig(profile.uiCulture),
     occasionalTravelRule:
       prefs.occasionalTravelAllowance === 'none'
         ? 'No outside-radius travel exception; hybrid/onsite outside commute ZIPs → hard_skip.'

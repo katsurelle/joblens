@@ -1,5 +1,6 @@
 import { createRoot, type Root } from 'react-dom/client';
 import { useCallback, type JSX } from 'react';
+import { I18nextProvider, useTranslation } from 'react-i18next';
 import {
   extractPageTextForBoard,
   resolveBoard,
@@ -19,6 +20,7 @@ import {
   GetPageTextRequestSchema,
   RunScanRequestSchema,
 } from '../types/messages';
+import { applyUiCulture, ensureI18n, i18n } from '../i18n';
 import { launcherStyles } from './launcherStyles';
 
 const board = resolveBoard();
@@ -52,26 +54,27 @@ let preflightGen = 0;
 let preflightDebounce: ReturnType<typeof setTimeout> | undefined;
 let lastListingFp = '';
 
-function badgeLabel(v: BadgeVerdict): string {
+function badgeLabel(v: BadgeVerdict, translate: (k: string) => string): string {
   switch (v) {
     case 'loading':
-      return 'Preflight…';
+      return translate('preflight.loading');
     case 'clear':
-      return 'Clear';
+      return translate('preflight.clear');
     case 'soft':
-      return 'Soft concern';
+      return translate('preflight.soft');
     case 'hard_skip':
-      return 'Hard skip';
+      return translate('preflight.hard_skip');
     case 'unknown':
-      return 'Unknown';
+      return translate('preflight.unknown');
     case 'error':
-      return 'Preflight unavailable';
+      return translate('preflight.error');
     default:
-      return 'Preflight idle';
+      return translate('preflight.idle');
   }
 }
 
 function Launcher(): JSX.Element {
+  const { t } = useTranslation();
   const onScan = useCallback(() => {
     void openSidePanel({ startScan: true });
   }, []);
@@ -81,7 +84,7 @@ function Launcher(): JSX.Element {
   }, []);
 
   const reasons = humanizePreflightReasons(ui.reasons);
-  const title = reasons.length ? reasons.join('\n') : badgeLabel(ui.badge);
+  const title = reasons.length ? reasons.join('\n') : badgeLabel(ui.badge, t);
   const showQuick = ui.mode === 'hybrid';
   const body = reasons[0]
     ? reasons
@@ -91,9 +94,9 @@ function Launcher(): JSX.Element {
     : null;
 
   return (
-    <div className="dock">
-      <div className="badge" data-verdict={ui.badge} title={title}>
-        <div className="badge-title">{badgeLabel(ui.badge)}</div>
+    <div className="dock" dir={document.documentElement.getAttribute('dir') || 'ltr'}>
+      <div className="badge" data-verdict={ui.badge} title={title} role="status">
+        <div className="badge-title">{badgeLabel(ui.badge, t)}</div>
         {body ? <div className="badge-body">{body}</div> : null}
       </div>
       <div className="row">
@@ -104,11 +107,11 @@ function Launcher(): JSX.Element {
             onClick={onQuick}
             disabled={ui.badge === 'loading' || !ui.ready}
           >
-            Quick check
+            {t('preflight.quickCheck')}
           </button>
         ) : null}
         <button className="launcher" type="button" onClick={onScan}>
-          JobLens · Scan
+          {t('app.brandScan')}
         </button>
       </div>
     </div>
@@ -117,7 +120,11 @@ function Launcher(): JSX.Element {
 
 function renderLauncher(): void {
   if (!launcherRoot) return;
-  launcherRoot.render(<Launcher />);
+  launcherRoot.render(
+    <I18nextProvider i18n={i18n}>
+      <Launcher />
+    </I18nextProvider>
+  );
 }
 
 function setUi(patch: Partial<LauncherUiState>): void {
@@ -130,6 +137,8 @@ function mountLauncher(): void {
     renderLauncher();
     return;
   }
+  ensureI18n();
+  void getConfig().then((c) => applyUiCulture(c.uiCulture));
   const host = document.createElement('div');
   host.id = 'joblens-root';
   document.documentElement.appendChild(host);
@@ -141,7 +150,7 @@ function mountLauncher(): void {
   shadow.appendChild(mount);
   launcherHost = host;
   launcherRoot = createRoot(mount);
-  launcherRoot.render(<Launcher />);
+  renderLauncher();
 }
 
 function unmountLauncher(): void {
@@ -156,9 +165,8 @@ function unmountLauncher(): void {
 
 function postingRejectReason(): string | null {
   if (shouldShowLauncher(board, location.href, document)) return null;
-  return board
-    ? 'Open a job posting page on this site (not a search/list page).'
-    : 'Unsupported page.';
+  ensureI18n();
+  return board ? i18n.t('launcher.openPosting') : i18n.t('launcher.unsupported');
 }
 
 function resolvedPageUrl(): string {
@@ -202,12 +210,13 @@ async function refreshModeFromConfig(): Promise<void> {
     setUi({
       ready: false,
       badge: 'error',
-      reasons: ['JobLens was updated or reloaded — refresh this page to continue.'],
+      reasons: [i18n.t('launcher.contextInvalidated')],
     });
     return;
   }
   try {
     const cfg = await getConfig();
+    await applyUiCulture(cfg.uiCulture);
     setUi({
       mode: cfg.preflightMode === 'hybrid' ? 'hybrid' : 'auto',
       ready: Boolean(cfg.apiKey.trim() && hasGeoIntent(cfg)),
@@ -218,7 +227,7 @@ async function refreshModeFromConfig(): Promise<void> {
       badge: isExtensionContextValid() ? ui.badge : 'error',
       reasons: isExtensionContextValid()
         ? ui.reasons
-        : ['JobLens was updated or reloaded — refresh this page to continue.'],
+        : [i18n.t('launcher.contextInvalidated')],
     });
   }
 }
@@ -239,7 +248,7 @@ async function runPreflight(opts: { forceHaiku?: boolean } = {}): Promise<void> 
   if (!isExtensionContextValid()) {
     setUi({
       badge: 'error',
-      reasons: ['JobLens was updated or reloaded — refresh this page to continue.'],
+      reasons: [i18n.t('launcher.contextInvalidated')],
     });
     return;
   }
@@ -300,7 +309,7 @@ function schedulePreflight(): void {
       if (!isExtensionContextValid()) {
         setUi({
           badge: 'error',
-          reasons: ['JobLens was updated or reloaded — refresh this page to continue.'],
+          reasons: [i18n.t('launcher.contextInvalidated')],
         });
         return;
       }
@@ -315,7 +324,7 @@ function schedulePreflight(): void {
       if (!isExtensionContextValid()) {
         setUi({
           badge: 'error',
-          reasons: ['JobLens was updated or reloaded — refresh this page to continue.'],
+          reasons: [i18n.t('launcher.contextInvalidated')],
         });
       }
     });

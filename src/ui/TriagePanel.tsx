@@ -1,4 +1,5 @@
 import type { JSX } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { Analysis, ApplyVerdict, FitLabel, PanelUiState } from '../types/domain';
 
 export type TriagePanelProps = {
@@ -9,11 +10,8 @@ export type TriagePanelProps = {
   saved?: boolean;
   copied?: boolean;
   copiedJson?: boolean;
-  /** When idle, show a primary Scan CTA */
   showScanCta?: boolean;
-  /** Non-blocking note when profile skills/geo need attention */
   profileWarning?: string;
-  /** When true, banner is required-geo (stronger); false = soft skills note */
   profileWarningRequired?: boolean;
   footer?: JSX.Element | null;
   onScan: () => void;
@@ -48,11 +46,14 @@ function applyBadgeClass(verdict: ApplyVerdict): string {
   return 'b-apply-maybe';
 }
 
-function applyLabel(verdict: ApplyVerdict): string {
-  if (verdict === 'yes') return 'Yes';
-  if (verdict === 'no') return 'No';
-  return 'Maybe';
-}
+const FIT_KEYS: Record<FitLabel, string> = {
+  'Perfect fit': 'triage.fitPerfect',
+  'Excellent fit': 'triage.fitExcellent',
+  'Good fit': 'triage.fitGood',
+  'Possible fit': 'triage.fitPossible',
+  'Unlikely fit': 'triage.fitUnlikely',
+  'Poor fit': 'triage.fitPoor',
+};
 
 export function TriagePanel({
   boardName,
@@ -72,12 +73,19 @@ export function TriagePanel({
   onCopyJson,
   onOpenOptions,
 }: TriagePanelProps): JSX.Element {
+  const { t, i18n } = useTranslation();
   const m = analysis?.masthead;
   const geo = analysis?.geo;
   const fit = analysis?.fit;
   const apply = analysis?.apply;
   const geoClass =
     geo?.verdict === 'eligible' ? 'b-ok' : geo?.verdict === 'excluded' ? 'b-no' : 'b-mid';
+
+  const applyLabel = (verdict: ApplyVerdict): string => {
+    if (verdict === 'yes') return t('common.yes');
+    if (verdict === 'no') return t('common.no');
+    return t('common.maybe');
+  };
 
   const warningBanner = profileWarning ? (
     <div
@@ -87,18 +95,19 @@ export function TriagePanel({
       <p>{profileWarning}</p>
       {onOpenOptions ? (
         <button type="button" className="linkish" onClick={onOpenOptions}>
-          Open Options
+          {t('common.openOptions')}
         </button>
       ) : null}
     </div>
   ) : null;
 
   return (
-    <div className="panel">
+    <div className="panel" dir={i18n.dir()}>
       <div className="head">
         <h1>
           <img className="brand-mark" src="/icons/icon32.png" width={20} height={20} alt="" />
-          JobLens{boardName ? ` · ${boardName}` : ''}
+          {t('triage.title')}
+          {boardName ? ` · ${boardName}` : ''}
         </h1>
       </div>
       <div className="body">
@@ -106,12 +115,10 @@ export function TriagePanel({
 
         {state === 'idle' && showScanCta && (
           <div className="idle">
-            <p className="hint">
-              Open a supported job posting, then scan to triage location, skills, and dealbreakers.
-            </p>
+            <p className="hint">{t('triage.idleHint')}</p>
             <div className="actions">
               <button className="primary" type="button" onClick={onScan}>
-                Scan this page
+                {t('triage.scanCta')}
               </button>
             </div>
           </div>
@@ -120,7 +127,7 @@ export function TriagePanel({
         {state === 'loading' && (
           <div className="loading">
             <span className="spin" />
-            Analyzing this posting…
+            {t('common.loading')}
           </div>
         )}
         {state === 'error' && <div className="error">{error}</div>}
@@ -128,7 +135,7 @@ export function TriagePanel({
         {state === 'error' && (
           <div className="actions">
             <button className="primary" type="button" onClick={onScan}>
-              Try again
+              {t('triage.scanCta')}
             </button>
           </div>
         )}
@@ -136,19 +143,19 @@ export function TriagePanel({
         {state === 'result' && analysis && m && (
           <>
             <div className="masthead">
-              <div className="org">{m.organization || 'Unknown org'}</div>
-              <div className="title">{m.title || 'Untitled role'}</div>
+              <div className="org">{m.organization || '—'}</div>
+              <div className="title">{m.title || '—'}</div>
 
               {(fit || apply) && (
                 <div className="ratings">
                   {fit && (
                     <span className={`badge ${fitBadgeClass(fit.label)}`}>
-                      {fit.label} · {fit.score}%
+                      {t(FIT_KEYS[fit.label] || 'triage.fit')} · {fit.score}%
                     </span>
                   )}
                   {apply && (
                     <span className={`badge ${applyBadgeClass(apply.verdict)}`}>
-                      Apply? {applyLabel(apply.verdict)}
+                      {t('triage.apply')} {applyLabel(apply.verdict)}
                     </span>
                   )}
                 </div>
@@ -158,21 +165,21 @@ export function TriagePanel({
                 <div className="rating-note">{apply.rationale}</div>
               ) : null}
 
-              <div className="k">Model</div>
+              <div className="k">{t('triage.workModel')}</div>
               <div>{m.workModel || '—'}</div>
-              <div className="k">Terms</div>
+              <div className="k">{t('triage.employment')}</div>
               <div>{m.employmentTerms || '—'}</div>
-              <div className="k">Travel</div>
+              <div className="k">{t('triage.travel')}</div>
               <div>{m.travel || '—'}</div>
-              <div className="k">Health</div>
+              <div className="k">{t('triage.health')}</div>
               <div>{m.healthInsurance || '—'}</div>
-              <div className="k">Pay</div>
+              <div className="k">{t('triage.pay')}</div>
               <div>{m.payRange || '—'}</div>
-              <div className="k">Seniority</div>
+              <div className="k">{t('triage.seniority')}</div>
               <div>{m.seniority || '—'}</div>
               {m.workAuthorization ? (
                 <>
-                  <div className="k">Auth</div>
+                  <div className="k">{t('triage.workAuthorization')}</div>
                   <div>{m.workAuthorization}</div>
                 </>
               ) : null}
@@ -180,7 +187,7 @@ export function TriagePanel({
 
             {geo && (
               <div className="section">
-                <h2>Location</h2>
+                <h2>{t('triage.geo')}</h2>
                 <span className={`badge ${geoClass}`}>{geo.verdict}</span>
                 {geo.method === 'zip-haversine' && (
                   <span className="badge b-mid" style={{ marginLeft: 6 }}>
@@ -195,7 +202,7 @@ export function TriagePanel({
 
             {analysis.dealbreakers.length > 0 && (
               <div className="section">
-                <h2>Dealbreakers</h2>
+                <h2>{t('triage.dealbreakers')}</h2>
                 {analysis.dealbreakers.map((d, i) => (
                   <div className="deal" key={i}>
                     <div className="req">{d.requirement}</div>
@@ -208,7 +215,7 @@ export function TriagePanel({
 
             {analysis.skipFlags.length > 0 && (
               <div className="section">
-                <h2>Skip triggers matched</h2>
+                <h2>{t('triage.skipFlags')}</h2>
                 {analysis.skipFlags.map((s, i) => (
                   <div className="skip" key={i}>
                     <div className="req">{s.trigger}</div>
@@ -220,7 +227,7 @@ export function TriagePanel({
 
             {analysis.skillMatches.length > 0 && (
               <div className="section">
-                <h2>Skills</h2>
+                <h2>{t('triage.skills')}</h2>
                 {analysis.skillMatches.map((s, i) => (
                   <div className={`flag ${s.status}`} key={i}>
                     <div className="req">
@@ -236,30 +243,30 @@ export function TriagePanel({
 
             {analysis.postingSmell && (
               <div className="section">
-                <h2>Note</h2>
+                <h2>{t('triage.postingSmell')}</h2>
                 <div className="hint">{analysis.postingSmell}</div>
               </div>
             )}
 
             {analysis.declutteredJD && (
               <div className="section">
-                <h2>Decluttered posting</h2>
+                <h2>{t('triage.decluttered')}</h2>
                 <div className="jd">{analysis.declutteredJD}</div>
               </div>
             )}
 
             <div className="actions">
               <button className="primary" type="button" onClick={onBookmark} disabled={saved}>
-                {saved ? 'Bookmarked' : 'Bookmark'}
+                {saved ? t('triage.bookmarked') : t('triage.bookmark')}
               </button>
               <button type="button" onClick={onCopyMarkdown}>
-                {copied ? 'Copied' : 'Copy markdown'}
+                {copied ? t('triage.copiedMarkdown') : t('triage.copyMarkdown')}
               </button>
               <button type="button" onClick={onCopyJson}>
-                {copiedJson ? 'Copied' : 'Copy JSON'}
+                {copiedJson ? t('triage.copiedJson') : t('triage.copyJson')}
               </button>
               <button type="button" onClick={onScan}>
-                Rescan
+                {t('app.scan')}
               </button>
             </div>
           </>

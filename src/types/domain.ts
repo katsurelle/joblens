@@ -43,6 +43,14 @@ export type GeoMethod = z.infer<typeof GeoMethodSchema>;
 export const ThemePreferenceSchema = z.enum(['default', 'light', 'dark']);
 export type ThemePreference = z.infer<typeof ThemePreferenceSchema>;
 
+/**
+ * UI culture preference.
+ * - `auto` → resolve from browser languages (fallback en-US)
+ * - otherwise a supported BCP 47 culture id (e.g. es-MX, zh-Hans-CN)
+ */
+export const UiCultureSchema = z.string().default('auto');
+export type UiCulture = z.infer<typeof UiCultureSchema>;
+
 /** Hard-gate preflight: auto runs Haiku on job view; hybrid is local-only until Quick check. */
 export const PreflightModeSchema = z.enum(['auto', 'hybrid']);
 export type PreflightMode = z.infer<typeof PreflightModeSchema>;
@@ -397,6 +405,11 @@ export const ConfigSchema = z.object({
   preferences: PreferencesSchema.default(DEFAULT_PREFERENCES),
   /** Appearance: default follows Chrome/OS prefers-color-scheme; light/dark force. */
   theme: ThemePreferenceSchema.default('default'),
+  /**
+   * Interface + Claude response culture.
+   * `auto` uses browser languages; otherwise a supported culture id.
+   */
+  uiCulture: UiCultureSchema.default('auto'),
   // Soft-parse bookmarks so a single corrupt row cannot brick Options.
   bookmarks: z
     .array(z.unknown())

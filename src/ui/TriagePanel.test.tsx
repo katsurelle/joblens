@@ -1,7 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { I18nextProvider } from 'react-i18next';
+import type { ReactElement } from 'react';
 import { TriagePanel } from './TriagePanel';
 import { makeAnalysis } from '../../tests/helpers/analysis';
+import { ensureI18n, i18n } from '../i18n';
+
+ensureI18n();
+
+function wrap(ui: ReactElement): ReactElement {
+  return <I18nextProvider i18n={i18n}>{ui}</I18nextProvider>;
+}
 
 describe('TriagePanel', () => {
   it('renders fit apply masthead and skills when ready', () => {
@@ -32,15 +41,17 @@ describe('TriagePanel', () => {
     });
 
     render(
-      <TriagePanel
-        boardName="ZipRecruiter"
-        state="result"
-        analysis={analysis}
-        onScan={vi.fn()}
-        onBookmark={vi.fn()}
-        onCopyMarkdown={vi.fn()}
-        onCopyJson={vi.fn()}
-      />
+      wrap(
+        <TriagePanel
+          boardName="ZipRecruiter"
+          state="result"
+          analysis={analysis}
+          onScan={vi.fn()}
+          onBookmark={vi.fn()}
+          onCopyMarkdown={vi.fn()}
+          onCopyJson={vi.fn()}
+        />
+      )
     );
 
     expect(screen.getByText(/Matrix Retail/i)).toBeInTheDocument();
@@ -52,15 +63,17 @@ describe('TriagePanel', () => {
 
   it('shows error state', () => {
     render(
-      <TriagePanel
-        state="error"
-        analysis={null}
-        error="Scan failed"
-        onScan={vi.fn()}
-        onBookmark={vi.fn()}
-        onCopyMarkdown={vi.fn()}
-        onCopyJson={vi.fn()}
-      />
+      wrap(
+        <TriagePanel
+          state="error"
+          analysis={null}
+          error="Scan failed"
+          onScan={vi.fn()}
+          onBookmark={vi.fn()}
+          onCopyMarkdown={vi.fn()}
+          onCopyJson={vi.fn()}
+        />
+      )
     );
     expect(screen.getByText(/Scan failed/i)).toBeInTheDocument();
   });

@@ -34,24 +34,29 @@ import type {
 } from '../types/domain';
 import { DEFAULT_PREFERENCES, DEFAULT_ROLE_SKIP_CATEGORIES } from '../types/domain';
 import { watchThemeFromConfig, applyTheme } from '../lib/theme';
+import { applyUiCulture, ensureI18n, i18n } from '../i18n';
+import { CulturePicker } from '../i18n/CulturePicker';
+import { AUTO_CULTURE_VALUE } from '../i18n/cultures';
+import { parseCommaList, parseNewlineList } from '../lib/listParse';
+import { I18nextProvider, useTranslation } from 'react-i18next';
 import './options.css';
 
 type OptionsTab = 'basics' | 'geography' | 'skills' | 'preferences';
 
-const TABS: Array<{ id: OptionsTab; label: string }> = [
-  { id: 'basics', label: 'Basics' },
-  { id: 'geography', label: 'Geography' },
-  { id: 'skills', label: 'Skills & history' },
-  { id: 'preferences', label: 'Preferences' },
-];
+const TAB_IDS: OptionsTab[] = ['basics', 'geography', 'skills', 'preferences'];
 
-const THEME_OPTIONS: Array<{ id: ThemePreference; label: string }> = [
-  { id: 'default', label: 'Default (follow Chrome / system)' },
-  { id: 'light', label: 'Light' },
-  { id: 'dark', label: 'Dark' },
-];
+const TAB_LABEL_KEYS: Record<OptionsTab, string> = {
+  basics: 'options.basics',
+  geography: 'options.geography',
+  skills: 'options.skills',
+  preferences: 'options.preferences',
+};
 
-import { parseCommaList, parseNewlineList } from '../lib/listParse';
+const THEME_OPTIONS: Array<{ id: ThemePreference; labelKey: string }> = [
+  { id: 'default', labelKey: 'theme.default' },
+  { id: 'light', labelKey: 'theme.light' },
+  { id: 'dark', labelKey: 'theme.dark' },
+];
 
 const parseLines = parseNewlineList;
 
@@ -60,6 +65,7 @@ function syncProficienciesFromClaims(claims: SkillClaim[]): string[] {
 }
 
 function Options(): JSX.Element {
+  const { t, i18n } = useTranslation();
   const [cfg, setCfg] = useState<Config | null>(null);
   const [status, setStatus] = useState('');
   const [extracting, setExtracting] = useState(false);
@@ -75,12 +81,13 @@ function Options(): JSX.Element {
   const [selectedChangeIds, setSelectedChangeIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    void getConfig().then((c) => {
+    void getConfig().then(async (c) => {
       setCfg(c);
       setDeficienciesText(c.deficiencies.join('\n'));
       setSkipTriggersText(c.skipTriggers.join('\n'));
       setBlockedEmployersText((c.preferences?.blockedEmployers ?? []).join('\n'));
       setWorkEligibleRegionsText(c.workEligibleRegions.join(', '));
+      await applyUiCulture(c.uiCulture);
       setDirty(false);
     });
   }, []);
@@ -97,7 +104,7 @@ function Options(): JSX.Element {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [dirty]);
 
-  if (!cfg) return <div className="wrap">Loading…</div>;
+  if (!cfg) return <div className="wrap">{t('options.loading')}</div>;
 
   const prefs: Preferences = cfg.preferences ?? DEFAULT_PREFERENCES;
   const markDirty = (): void => setDirty(true);
@@ -203,11 +210,11 @@ function Options(): JSX.Element {
 
   const runExtract = async (): Promise<void> => {
     setExtracting(true);
-    setStatus('Extracting skills from work history…');
+    setStatus(t('options.statusExtractingSkills'));
     const res = await extractSkills({ workHistory: cfg.workHistory });
     setExtracting(false);
     if (!res.ok) {
-      setStatus('Extraction failed: ' + res.error);
+      setStatus(t('options.statusExtractFailed', { error: res.error }));
       return;
     }
 
@@ -228,7 +235,10 @@ function Options(): JSX.Element {
       proficiencies: syncProficienciesFromClaims(skillClaims),
     });
     setStatus(
-      `Merged ${claimAdds.length} new skill(s) from history (${res.data.skills.length} found). Review standings below, then Save.`
+      t('options.statusMergedSkills', {
+        added: claimAdds.length,
+        found: res.data.skills.length,
+      })
     );
   };
 
@@ -241,24 +251,22 @@ function Options(): JSX.Element {
 
   const runProposeFromDocs = async (): Promise<void> => {
     if (!docFiles.length) {
-      setStatus('Choose one or more .txt, .md, .pdf, or .docx files first.');
+      setStatus(t('options.statusChooseFiles'));
       return;
     }
     setProposing(true);
-    setStatus('Extracting text from documents…');
+    setStatus(t('options.statusExtractingText'));
     try {
       const bundle = await extractTextsFromFiles(docFiles);
       setStatus(
-        bundle.truncated
-          ? 'Text truncated to limit; proposing config changes…'
-          : 'Proposing config changes…'
+        bundle.truncated ? t('options.statusTruncatedPropose') : t('options.statusProposing')
       );
       const res = await proposeConfigFromDocs({
         documentText: bundle.text,
         truncated: bundle.truncated,
       });
       if (!res.ok) {
-        setStatus('Propose failed: ' + res.error);
+        setStatus(t('options.statusProposeFailed', { error: res.error }));
         setProposing(false);
         return;
       }
@@ -270,12 +278,12 @@ function Options(): JSX.Element {
       setSelectedChangeIds(new Set(nextProposal.changes.map((c) => c.id)));
       setStatus(
         nextProposal.changes.length
-          ? `Proposed ${nextProposal.changes.length} change(s). Review and apply, then Save.`
-          : 'No changes proposed from those documents.'
+          ? t('options.statusProposed', { count: nextProposal.changes.length })
+          : t('options.statusNoProposed')
       );
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      setStatus('Import failed: ' + message);
+      setStatus(t('options.statusImportFailed', { error: message }));
     }
     setProposing(false);
   };
@@ -293,7 +301,7 @@ function Options(): JSX.Element {
     if (!proposal) return;
     const selected = proposal.changes.filter((c) => selectedChangeIds.has(c.id));
     if (!selected.length) {
-      setStatus('Select at least one change to apply.');
+      setStatus(t('options.statusSelectChange'));
       return;
     }
     const next = applyConfigProposalChanges(cfg, selected);
@@ -302,13 +310,13 @@ function Options(): JSX.Element {
     markDirty();
     setProposal(null);
     setSelectedChangeIds(new Set());
-    setStatus(`Applied ${selected.length} change(s). Review drafts, then Save.`);
+    setStatus(t('options.statusApplied', { count: selected.length }));
   };
 
   const discardProposal = (): void => {
     setProposal(null);
     setSelectedChangeIds(new Set());
-    setStatus('Proposal discarded.');
+    setStatus(t('options.statusDiscarded'));
   };
 
   const save = async (): Promise<void> => {
@@ -335,25 +343,22 @@ function Options(): JSX.Element {
     setBlockedEmployersText(toSave.preferences.blockedEmployers.join('\n'));
     setWorkEligibleRegionsText(toSave.workEligibleRegions.join(', '));
     setDirty(false);
-    setStatus('Saved.');
+    setStatus(t('options.saved'));
     setTimeout(() => setStatus(''), 2000);
   };
 
   return (
-    <div className="wrap">
+    <div className="wrap" dir={i18n.dir()}>
       <h1 className="page-title">
         <img className="brand-mark" src="/icons/icon48.png" width={28} height={28} alt="" />
-        JobLens settings
+        {t('options.pageTitle')}
       </h1>
 
       <section className="import-box">
-        <h2>Import documents</h2>
-        <p className="note">
-          Upload resumes or notes (.txt, .md, .pdf, .docx). JobLens proposes config changes; you
-          review and apply into the draft, then Save.
-        </p>
+        <h2>{t('options.importTitle')}</h2>
+        <p className="note">{t('options.importHint')}</p>
         <label>
-          Files
+          {t('options.files')}
           <input
             type="file"
             multiple
@@ -363,7 +368,7 @@ function Options(): JSX.Element {
         </label>
         {docFiles.length ? (
           <p className="note">
-            Selected: {docFiles.map((f) => f.name).join(', ')}
+            {t('options.selectedFiles', { names: docFiles.map((f) => f.name).join(', ') })}
           </p>
         ) : null}
         <button
@@ -372,14 +377,14 @@ function Options(): JSX.Element {
           onClick={() => void runProposeFromDocs()}
           disabled={proposing || !docFiles.length}
         >
-          {proposing ? 'Proposing…' : 'Propose from documents'}
+          {proposing ? t('options.proposing') : t('options.proposeFromDocs')}
         </button>
 
         {proposal ? (
           <div className="proposal">
             {proposal.summary ? <p className="proposal-summary">{proposal.summary}</p> : null}
             {proposal.changes.length === 0 ? (
-              <p className="note">No changes in this proposal.</p>
+              <p className="note">{t('options.noProposalChanges')}</p>
             ) : (
               <ul className="proposal-list">
                 {proposal.changes.map((change) => (
@@ -403,27 +408,27 @@ function Options(): JSX.Element {
             )}
             <div className="row" style={{ marginTop: 12 }}>
               <button className="primary" type="button" onClick={applySelectedProposal}>
-                Apply selected
+                {t('options.applySelected')}
               </button>
               <button className="rm" type="button" onClick={discardProposal}>
-                Discard
+                {t('options.discard')}
               </button>
             </div>
           </div>
         ) : null}
       </section>
 
-      <div className="tabs" role="tablist" aria-label="Settings sections">
-        {TABS.map((tab) => (
+      <div className="tabs" role="tablist" aria-label={t('options.tabsAria')}>
+        {TAB_IDS.map((tabId) => (
           <button
-            key={tab.id}
+            key={tabId}
             type="button"
             role="tab"
-            aria-selected={activeTab === tab.id}
-            className={`tab${activeTab === tab.id ? ' active' : ''}`}
-            onClick={() => setActiveTab(tab.id)}
+            aria-selected={activeTab === tabId}
+            className={`tab${activeTab === tabId ? ' active' : ''}`}
+            onClick={() => setActiveTab(tabId)}
           >
-            {tab.label}
+            {t(TAB_LABEL_KEYS[tabId])}
           </button>
         ))}
       </div>
@@ -431,9 +436,9 @@ function Options(): JSX.Element {
       {activeTab === 'basics' ? (
         <>
           <section>
-            <h2>Basics</h2>
+            <h2>{t('options.basics')}</h2>
             <label>
-              Anthropic API key
+              {t('options.apiKey')}
               <input
                 type="password"
                 value={cfg.apiKey}
@@ -441,12 +446,9 @@ function Options(): JSX.Element {
                 placeholder="sk-ant-…"
               />
             </label>
-            <p className="note">
-              Stored only in this browser profile and sent directly to the Anthropic API. Anyone with
-              access to the profile can read it — use a dedicated key with limits.
-            </p>
+            <p className="note">{t('options.apiKeyNoteLong')}</p>
             <label>
-              Model
+              {t('options.model')}
               <select value={modelValue} onChange={(e) => patch({ model: e.target.value })}>
                 {CLAUDE_MODELS.map((m) => (
                   <option key={m.id} value={m.id}>
@@ -456,13 +458,10 @@ function Options(): JSX.Element {
               </select>
             </label>
             {!modelIds.has(cfg.model) && cfg.model ? (
-              <p className="note">
-                Previous model <code>{cfg.model}</code> is not in the current list; Sonnet 5 is
-                selected. Save to persist.
-              </p>
+              <p className="note">{t('options.modelStale', { model: cfg.model })}</p>
             ) : null}
             <label>
-              Hard-gate preflight
+              {t('preflight.modeLabel')}
               <select
                 value={cfg.preflightMode || 'auto'}
                 onChange={(e) =>
@@ -471,43 +470,44 @@ function Options(): JSX.Element {
               >
                 {PREFLIGHT_MODE_OPTIONS.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.label}
+                    {m.id === 'auto' ? t('preflight.modeAuto') : t('preflight.modeHybrid')}
                   </option>
                 ))}
               </select>
             </label>
-            <p className="note">
-              Speedy skip signals before a full Scan. Uses Haiku (no extended thinking) regardless of
-              the Scan model above. Auto checks listings as you open them; Hybrid waits for Quick
-              check to spend Haiku tokens.
-            </p>
+            <p className="note">{t('preflight.modeHint')}</p>
             <label>
-              Theme
+              {t('theme.label')}
               <select
                 value={cfg.theme || 'default'}
                 onChange={(e) => patch({ theme: e.target.value as ThemePreference })}
               >
-                {THEME_OPTIONS.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.label}
+                {THEME_OPTIONS.map((th) => (
+                  <option key={th.id} value={th.id}>
+                    {t(th.labelKey)}
                   </option>
                 ))}
               </select>
             </label>
+            <CulturePicker
+              value={cfg.uiCulture || AUTO_CULTURE_VALUE}
+              onChange={(next) => {
+                patch({ uiCulture: next });
+                void applyUiCulture(next);
+              }}
+            />
           </section>
 
           <section>
-            <h2>Identity for matching</h2>
-            <p className="note">
-              No name or identity fields are required for triage. Add only what changes matching.
-            </p>
+            <h2>{t('options.identity')}</h2>
+            <p className="note">{t('options.identityNote')}</p>
             <label>
-              Highest education
+              {t('options.education')}
               <select
                 value={educationKnown ? cfg.education : ''}
                 onChange={(e) => patch({ education: e.target.value })}
               >
-                <option value="">— Not set —</option>
+                <option value="">{t('common.notSet')}</option>
                 {EDUCATION_LEVELS.map((level) => (
                   <option key={level} value={level}>
                     {level}
@@ -517,21 +517,21 @@ function Options(): JSX.Element {
             </label>
             {!educationKnown && cfg.education ? (
               <p className="note">
-                Custom value on file: <em>{cfg.education}</em>. Choose a list item to replace it.
+                {t('options.educationCustom', { value: cfg.education })}
               </p>
             ) : null}
             <label>
-              Work authorization note (optional)
+              {t('options.workAuth')}
               <textarea
                 rows={2}
                 value={cfg.workAuthorizationNote || ''}
                 onChange={(e) => patch({ workAuthorizationNote: e.target.value })}
-                placeholder="e.g. US citizen, no sponsorship needed"
+                placeholder={t('options.workAuthPlaceholder')}
               />
             </label>
             <div className="row">
               <label style={{ flex: 1 }}>
-                Target start date
+                {t('options.targetStart')}
                 <input
                   type="date"
                   value={prefs.targetStartDate || ''}
@@ -539,7 +539,7 @@ function Options(): JSX.Element {
                 />
               </label>
               <label style={{ flex: 1 }}>
-                Notice period (weeks)
+                {t('options.noticeWeeks')}
                 <input
                   type="number"
                   min={0}
@@ -558,7 +558,7 @@ function Options(): JSX.Element {
                 checked={prefs.availableImmediately}
                 onChange={(e) => patchPrefs({ availableImmediately: e.target.checked })}
               />
-              <span>Available immediately</span>
+              <span>{t('options.availableImmediately')}</span>
             </label>
           </section>
         </>
@@ -566,52 +566,46 @@ function Options(): JSX.Element {
 
       {activeTab === 'geography' ? (
         <section>
-          <h2>Geography</h2>
-          <p className="note">
-            Required for Scan — set at least one of: a commute ZIP, remote-eligible regions, or
-            Remote only. Without geography intent, scanning is blocked.
-          </p>
+          <h2>{t('options.geography')}</h2>
+          <p className="note">{t('options.geoHint')}</p>
           <label className="check">
             <input
               type="checkbox"
               checked={prefs.remoteOnly}
               onChange={(e) => patchPrefs({ remoteOnly: e.target.checked })}
             />
-            <span>Remote only — skip onsite and hybrid roles</span>
+            <span>{t('options.remoteOnly')}</span>
           </label>
           {prefs.remoteOnly ? (
-            <p className="note">
-              ZIP radii are optional while Remote only is on (useful if you later uncheck). Regions
-              still help with residency-restricted remote postings.
-            </p>
+            <p className="note">{t('options.geoRemoteOnlyHint')}</p>
           ) : (
-            <p className="note">Add each ZIP you&apos;d commute to for onsite/hybrid checks.</p>
+            <p className="note">{t('options.geoZipHint')}</p>
           )}
           {cfg.locations.map((l, i) => (
             <div className="row" key={i}>
               <input
-                placeholder="ZIP"
+                placeholder={t('options.zipPlaceholder')}
                 value={l.zip}
                 onChange={(e) => setLoc(i, 'zip', e.target.value)}
                 style={{ maxWidth: 120 }}
               />
               <input
                 type="number"
-                placeholder="miles"
+                placeholder={t('options.milesPlaceholder')}
                 value={l.radiusMiles}
                 onChange={(e) => setLoc(i, 'radiusMiles', Number(e.target.value))}
                 style={{ maxWidth: 100 }}
               />
               <button className="rm" type="button" onClick={() => rmLoc(i)}>
-                remove
+                {t('common.remove')}
               </button>
             </div>
           ))}
           <button className="add" type="button" onClick={addLoc}>
-            + location
+            {t('common.addLocation')}
           </button>
           <label>
-            Occasional travel outside my radii
+            {t('options.travelAllowance')}
             <select
               value={prefs.occasionalTravelAllowance || 'none'}
               onChange={(e) =>
@@ -620,21 +614,25 @@ function Options(): JSX.Element {
                 })
               }
             >
-              {OCCASIONAL_TRAVEL_OPTIONS.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.label}
-                </option>
-              ))}
+              {OCCASIONAL_TRAVEL_OPTIONS.map((o) => {
+                const travelKeys: Record<(typeof OCCASIONAL_TRAVEL_OPTIONS)[number]['id'], string> = {
+                  none: 'options.travelNone',
+                  weekly: 'options.travelWeekly',
+                  monthly: 'options.travelMonthly',
+                  quarterly: 'options.travelQuarterly',
+                  yearly: 'options.travelYearly',
+                };
+                return (
+                  <option key={o.id} value={o.id}>
+                    {t(travelKeys[o.id])}
+                  </option>
+                );
+              })}
             </select>
           </label>
-          <p className="note">
-            When set, primarily remote / light-hybrid roles that ask for onsite visits up to this
-            often (and no more) get a Soft concern instead of a Hard skip if the site is outside your
-            ZIP radii. None keeps the strict commute hard-skip. Daily or multi-day office weeks still
-            hard-skip.
-          </p>
+          <p className="note">{t('options.travelHint')}</p>
           <label>
-            Where you can work from for remote roles (comma-separated US states, e.g. CA, NY)
+            {t('options.regionsLabel')}
             <input
               value={workEligibleRegionsText}
               onChange={(e) => {
@@ -645,23 +643,20 @@ function Options(): JSX.Element {
               autoComplete="off"
             />
           </label>
-          <p className="note">
-            Residency filter for remote jobs only — not commute cities. Nationwide remote with no
-            residency limit stays eligible even when the employer lists an out-of-region HQ.
-          </p>
+          <p className="note">{t('options.regionsHint')}</p>
           <details className="advanced">
-            <summary>Advanced</summary>
+            <summary>{t('options.advanced')}</summary>
             <label>
-              Remote preference
+              {t('options.remotePreference')}
               <select
                 value={prefs.remotePreference}
                 onChange={(e) =>
                   patchPrefs({ remotePreference: e.target.value as RemotePreference })
                 }
               >
-                <option value="prefer_remote">Prefer remote</option>
-                <option value="neutral">Neutral</option>
-                <option value="prefer_onsite">Prefer onsite / hybrid</option>
+                <option value="prefer_remote">{t('options.preferRemote')}</option>
+                <option value="neutral">{t('options.neutral')}</option>
+                <option value="prefer_onsite">{t('options.preferOnsite')}</option>
               </select>
             </label>
             <label className="check">
@@ -672,7 +667,7 @@ function Options(): JSX.Element {
                   patchPrefs({ requireRelocationSubsidyOutsideMetros: e.target.checked })
                 }
               />
-              <span>Flag relocation required outside my metros without subsidy language</span>
+              <span>{t('options.relocationFlag')}</span>
             </label>
           </details>
         </section>
@@ -681,20 +676,16 @@ function Options(): JSX.Element {
       {activeTab === 'skills' ? (
         <>
           <section>
-            <h2>Skills</h2>
-            <p className="note">
-              Strongly recommended for reliable Fit/Apply. One list: Held = ground truth for matches;
-              Ramp = partial; Never-claim = mismatch if required. Extract from history merges new
-              skills in as held — review standings before Save.
-            </p>
+            <h2>{t('options.skills')}</h2>
+            <p className="note">{t('options.skillsHint')}</p>
             <table className="skills">
               <thead>
                 <tr>
-                  <th>Skill</th>
-                  <th>Standing</th>
-                  <th>Years</th>
-                  <th>Last used</th>
-                  <th>Scope</th>
+                  <th>{t('options.colSkill')}</th>
+                  <th>{t('options.colStanding')}</th>
+                  <th>{t('options.colYears')}</th>
+                  <th>{t('options.colLastUsed')}</th>
+                  <th>{t('options.colScope')}</th>
                   <th></th>
                 </tr>
               </thead>
@@ -714,9 +705,9 @@ function Options(): JSX.Element {
                           setClaim(i, 'standing', e.target.value as SkillStanding)
                         }
                       >
-                        <option value="held">held</option>
-                        <option value="ramp">ramp</option>
-                        <option value="never_claim">never-claim</option>
+                        <option value="held">{t('options.standingHeld')}</option>
+                        <option value="ramp">{t('options.standingRamp')}</option>
+                        <option value="never_claim">{t('options.standingNever')}</option>
                       </select>
                     </td>
                     <td>
@@ -745,7 +736,7 @@ function Options(): JSX.Element {
                       <input
                         value={c.scopeNote || ''}
                         onChange={(e) => setClaim(i, 'scopeNote', e.target.value)}
-                        placeholder="auth module only"
+                        placeholder={t('options.scopePlaceholder')}
                       />
                     </td>
                     <td>
@@ -758,10 +749,10 @@ function Options(): JSX.Element {
               </tbody>
             </table>
             <button className="add" type="button" onClick={addClaim}>
-              + skill claim
+              {t('options.addSkill')}
             </button>
             <label style={{ marginTop: 14 }}>
-              Known gaps (one per line — quick list; prefer standing above when possible)
+              {t('options.gapsLabel')}
               <textarea
                 rows={3}
                 value={deficienciesText}
@@ -775,48 +766,48 @@ function Options(): JSX.Element {
           </section>
 
           <section>
-            <h2>Work history</h2>
+            <h2>{t('options.workHistory')}</h2>
             {cfg.workHistory.map((w, i) => (
               <div className="job" key={i}>
                 <div className="row">
                   <input
-                    placeholder="Org"
+                    placeholder={t('options.orgPlaceholder')}
                     value={w.org}
                     onChange={(e) => setJob(i, 'org', e.target.value)}
                   />
                   <input
-                    placeholder="Title"
+                    placeholder={t('options.titlePlaceholder')}
                     value={w.title}
                     onChange={(e) => setJob(i, 'title', e.target.value)}
                   />
                 </div>
                 <div className="row">
                   <input
-                    placeholder="Start YYYY-MM"
+                    placeholder={t('options.startPlaceholder')}
                     value={w.start}
                     onChange={(e) => setJob(i, 'start', e.target.value)}
                     style={{ maxWidth: 150 }}
                   />
                   <input
-                    placeholder="End YYYY-MM or present"
+                    placeholder={t('options.endPlaceholder')}
                     value={w.end}
                     onChange={(e) => setJob(i, 'end', e.target.value)}
                     style={{ maxWidth: 200 }}
                   />
                   <button className="rm" type="button" onClick={() => rmJob(i)}>
-                    remove
+                    {t('common.remove')}
                   </button>
                 </div>
                 <textarea
                   rows={4}
-                  placeholder="What you did — activities, technologies, scope"
+                  placeholder={t('options.jobDescPlaceholder')}
                   value={w.description}
                   onChange={(e) => setJob(i, 'description', e.target.value)}
                 />
               </div>
             ))}
             <button className="add" type="button" onClick={addJob}>
-              + job
+              {t('options.addJob')}
             </button>
             <div style={{ marginTop: 12 }}>
               <button
@@ -825,7 +816,7 @@ function Options(): JSX.Element {
                 onClick={() => void runExtract()}
                 disabled={extracting}
               >
-                {extracting ? 'Extracting…' : 'Extract skills from history'}
+                {extracting ? t('options.extracting') : t('options.extractSkills')}
               </button>
             </div>
           </section>
@@ -834,13 +825,20 @@ function Options(): JSX.Element {
 
       {activeTab === 'preferences' ? (
         <section>
-          <h2>Preferences</h2>
+          <h2>{t('options.preferences')}</h2>
           <p className="note" style={{ marginTop: 0 }}>
-            Employment priority (check to include; use arrows to rank).
+            {t('options.employmentPriorityHint')}
           </p>
           {EMPLOYMENT_PRIORITY_OPTIONS.map((opt) => {
             const included = prefs.employmentPriority.includes(opt.id);
             const rank = included ? prefs.employmentPriority.indexOf(opt.id) + 1 : null;
+            const empKeys: Record<(typeof EMPLOYMENT_PRIORITY_OPTIONS)[number]['id'], string> = {
+              permanent: 'options.empPermanent',
+              contract_to_hire: 'options.empContractToHire',
+              long_contract: 'options.empLongContract',
+              short_contract: 'options.empShortContract',
+              part_time: 'options.empPartTime',
+            };
             return (
               <div className="prio-row" key={opt.id}>
                 <label className="check" style={{ margin: 0, flex: 1 }}>
@@ -850,7 +848,7 @@ function Options(): JSX.Element {
                     onChange={() => toggleEmploymentPriority(opt.id)}
                   />
                   <span>
-                    {opt.label}
+                    {t(empKeys[opt.id])}
                     {rank != null ? ` (#${rank})` : ''}
                   </span>
                 </label>
@@ -876,7 +874,7 @@ function Options(): JSX.Element {
             );
           })}
           <label>
-            Minimum contract length (months, optional)
+            {t('options.minContractMonths')}
             <input
               type="number"
               min={0}
@@ -886,24 +884,24 @@ function Options(): JSX.Element {
                   minContractMonths: e.target.value === '' ? null : Number(e.target.value),
                 })
               }
-              placeholder="Leave empty for no floor"
+              placeholder={t('options.minContractPlaceholder')}
             />
           </label>
           <label>
-            Security clearance policy
+            {t('options.clearancePolicy')}
             <select
               value={prefs.clearancePolicy}
               onChange={(e) =>
                 patchPrefs({ clearancePolicy: e.target.value as ClearancePolicy })
               }
             >
-              <option value="ignore">Ignore clearance language</option>
-              <option value="flag">Flag as concern</option>
-              <option value="skip">Hard skip / dealbreaker</option>
+              <option value="ignore">{t('options.clearanceIgnore')}</option>
+              <option value="flag">{t('options.clearanceFlag')}</option>
+              <option value="skip">{t('options.clearanceSkip')}</option>
             </select>
           </label>
           <label>
-            Blocked employers (one per line)
+            {t('options.blockedEmployers')}
             <textarea
               rows={3}
               value={blockedEmployersText}
@@ -911,11 +909,11 @@ function Options(): JSX.Element {
                 setBlockedEmployersText(e.target.value);
                 markDirty();
               }}
-              placeholder="Company or entity names to hard-skip"
+              placeholder={t('options.blockedEmployersPlaceholder')}
             />
           </label>
           <label>
-            Custom skip triggers (one per line)
+            {t('options.skipTriggers')}
             <textarea
               rows={5}
               value={skipTriggersText}
@@ -931,32 +929,30 @@ function Options(): JSX.Element {
               checked={prefs.flagPermNotices}
               onChange={(e) => patchPrefs({ flagPermNotices: e.target.checked })}
             />
-            <span>Flag PERM labor-certification notices</span>
+            <span>{t('options.flagPerm')}</span>
           </label>
 
           <details className="advanced">
-            <summary>Advanced</summary>
+            <summary>{t('options.advanced')}</summary>
             <p className="note" style={{ marginTop: 12 }}>
-              Soft signals
+              {t('options.softSignals')}
             </p>
             <label>
-              Pay limits
+              {t('options.payLimits')}
               <select
                 value={prefs.compensationMode}
                 onChange={(e) =>
                   patchPrefs({ compensationMode: e.target.value as CompensationMode })
                 }
               >
-                <option value="suspend_floors">Ignore listed pay</option>
-                <option value="use_floors">Skip jobs outside my min–max</option>
+                <option value="suspend_floors">{t('options.paySuspend')}</option>
+                <option value="use_floors">{t('options.payUseFloors')}</option>
               </select>
             </label>
-            <p className="note">
-              Min/max only apply when “Skip jobs outside my min–max” is selected.
-            </p>
+            <p className="note">{t('options.payFloorsHint')}</p>
             <div className="row">
               <label style={{ flex: 1 }}>
-                Min ask (USD, optional)
+                {t('options.minAsk')}
                 <input
                   type="number"
                   min={0}
@@ -969,7 +965,7 @@ function Options(): JSX.Element {
                 />
               </label>
               <label style={{ flex: 1 }}>
-                Max ask (USD, optional)
+                {t('options.maxAsk')}
                 <input
                   type="number"
                   min={0}
@@ -988,7 +984,7 @@ function Options(): JSX.Element {
                 checked={prefs.flagSuspiciousComp}
                 onChange={(e) => patchPrefs({ flagSuspiciousComp: e.target.checked })}
               />
-              <span>Flag suspiciously high or low pay vs typical market (rationale only)</span>
+              <span>{t('options.flagSuspiciousComp')}</span>
             </label>
             <label className="check">
               <input
@@ -996,50 +992,65 @@ function Options(): JSX.Element {
                 checked={prefs.preferStructuredWork}
                 onChange={(e) => patchPrefs({ preferStructuredWork: e.target.checked })}
               />
-              <span>Prefer structured / high-accountability JD language (soft Fit weight)</span>
+              <span>{t('options.preferStructured')}</span>
             </label>
             <label>
-              How full is your application pipeline?
+              {t('options.pipelineLoad')}
               <select
                 value={prefs.pipelineLoad}
                 onChange={(e) => patchPrefs({ pipelineLoad: e.target.value as PipelineLoad })}
               >
-                <option value="unset">Unset</option>
-                <option value="light">Light</option>
-                <option value="moderate">Moderate</option>
-                <option value="heavy">Heavy</option>
+                <option value="unset">{t('options.pipelineUnset')}</option>
+                <option value="light">{t('options.pipelineLight')}</option>
+                <option value="moderate">{t('options.pipelineModerate')}</option>
+                <option value="heavy">{t('options.pipelineHeavy')}</option>
               </select>
             </label>
-            <p className="note">
-              Adds a short note to Apply guidance only; does not reject roles.
-            </p>
+            <p className="note">{t('options.pipelineHint')}</p>
 
             <p className="note" style={{ marginTop: 14 }}>
-              Role-type skips (all off by default — enable only what you want).
+              {t('options.roleSkipHint')}
             </p>
-            {SKIP_CATEGORY_OPTIONS.map((opt) => (
-              <label className="check" key={opt.id}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(
-                    (prefs.roleSkipCategories ?? DEFAULT_ROLE_SKIP_CATEGORIES)[opt.id]
-                  )}
-                  onChange={(e) =>
-                    patchPrefs({
-                      roleSkipCategories: {
-                        ...DEFAULT_ROLE_SKIP_CATEGORIES,
-                        ...prefs.roleSkipCategories,
-                        [opt.id]: e.target.checked,
-                      },
-                    })
-                  }
-                />
-                <span>
-                  {opt.label}
-                  <span className="hint"> — {opt.hint}</span>
-                </span>
-              </label>
-            ))}
+            {SKIP_CATEGORY_OPTIONS.map((opt) => {
+              const skipKeys: Record<
+                (typeof SKIP_CATEGORY_OPTIONS)[number]['id'],
+                { label: string; hint: string }
+              > = {
+                ml_training: { label: 'options.skipMl', hint: 'options.skipMlHint' },
+                ai_live_tech_interview: {
+                  label: 'options.skipAiInterview',
+                  hint: 'options.skipAiInterviewHint',
+                },
+                unverifiable_employer: {
+                  label: 'options.skipUnverifiable',
+                  hint: 'options.skipUnverifiableHint',
+                },
+              };
+              const keys = skipKeys[opt.id];
+              return (
+                <label className="check" key={opt.id}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(
+                      (prefs.roleSkipCategories ?? DEFAULT_ROLE_SKIP_CATEGORIES)[opt.id]
+                    )}
+                    onChange={(e) =>
+                      patchPrefs({
+                        roleSkipCategories: {
+                          ...DEFAULT_ROLE_SKIP_CATEGORIES,
+                          ...prefs.roleSkipCategories,
+                          [opt.id]: e.target.checked,
+                        },
+                      })
+                    }
+                  />
+                  <span>
+                    {t(keys.label)}
+                    <span className="hint"> — {t(keys.hint)}</span>
+                  </span>
+                </label>
+              );
+            })}
 
             <label className="check">
               <input
@@ -1047,7 +1058,7 @@ function Options(): JSX.Element {
                 checked={prefs.flagShellEmployers}
                 onChange={(e) => patchPrefs({ flagShellEmployers: e.target.checked })}
               />
-              <span>Flag thin / new / unverifiable employers</span>
+              <span>{t('options.flagShell')}</span>
             </label>
             <label className="check">
               <input
@@ -1055,12 +1066,10 @@ function Options(): JSX.Element {
                 checked={prefs.clearanceIncludePreferred}
                 onChange={(e) => patchPrefs({ clearanceIncludePreferred: e.target.checked })}
               />
-              <span>
-                Also treat “preferred / able to obtain” clearance as in-scope for the policy
-              </span>
+              <span>{t('options.clearancePreferred')}</span>
             </label>
             <label>
-              Clearance skip-until date (optional)
+              {t('options.clearanceUntil')}
               <input
                 type="date"
                 value={prefs.clearanceSkipUntil || ''}
@@ -1073,10 +1082,10 @@ function Options(): JSX.Element {
 
       <div className="savebar">
         <button className="save" type="button" onClick={() => void save()} disabled={!dirty}>
-          Save settings
+          {t('options.saveSettings')}
         </button>
         <span className={`status${dirty ? ' dirty' : ''}`}>
-          {dirty ? 'Unsaved changes — save before closing this tab.' : status}
+          {dirty ? t('options.unsaved') : status}
         </span>
       </div>
     </div>
@@ -1085,4 +1094,9 @@ function Options(): JSX.Element {
 
 const root = document.getElementById('root');
 if (!root) throw new Error('JobLens options: #root missing');
-createRoot(root).render(<Options />);
+ensureI18n();
+createRoot(root).render(
+  <I18nextProvider i18n={i18n}>
+    <Options />
+  </I18nextProvider>
+);

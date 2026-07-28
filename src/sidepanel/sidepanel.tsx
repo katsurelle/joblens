@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState, type JSX } from 'react';
 import { createRoot } from 'react-dom/client';
+import { I18nextProvider, useTranslation } from 'react-i18next';
 import { boardDisplayNames } from '../lib/boards';
 import { analysisToJsonString } from '../lib/jsonExport';
 import { analysisToMarkdown } from '../lib/markdown';
 import { analyzeJd, getPageTextFromTab } from '../lib/messaging';
 import { addBookmark, assessProfileCompleteness, getConfig, hasGeoIntent, isBookmarked } from '../lib/storage';
 import { watchThemeFromConfig } from '../lib/theme';
+import { applyUiCulture, ensureI18n, i18n } from '../i18n';
 import type { Analysis, PanelUiState } from '../types/domain';
 import { TriagePanel } from '../ui/TriagePanel';
 import '../ui/triagePanel.css';
@@ -18,6 +20,7 @@ type PageMeta = {
 };
 
 function SidePanelApp(): JSX.Element {
+  const { t } = useTranslation();
   const [state, setState] = useState<PanelUiState>('idle');
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [error, setError] = useState('');
@@ -33,6 +36,7 @@ function SidePanelApp(): JSX.Element {
     const c = assessProfileCompleteness(cfg);
     setProfileWarning(c.message);
     setProfileWarningRequired(c.incomplete);
+    await applyUiCulture(cfg.uiCulture);
   }, []);
 
   useEffect(() => {
@@ -59,14 +63,12 @@ function SidePanelApp(): JSX.Element {
     setProfileWarningRequired(completeness.incomplete);
     if (!cfg.apiKey) {
       setState('error');
-      setError('No API key set. Open Options below and add one.');
+      setError(t('sidepanel.noApiKey'));
       return;
     }
     if (!hasGeoIntent(cfg)) {
       setState('error');
-      setError(
-        'Set geography in Options first: add a ZIP, remote regions, or turn on Remote only.'
-      );
+      setError(t('sidepanel.geoRequired'));
       return;
     }
 
@@ -101,7 +103,7 @@ function SidePanelApp(): JSX.Element {
     setAnalysis(res.data.analysis);
     setState('result');
     setSaved(await isBookmarked(url));
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -207,13 +209,13 @@ function SidePanelApp(): JSX.Element {
       footer={
         <div className="foot">
           <button type="button" onClick={() => void chrome.runtime.openOptionsPage()}>
-            Options
+            {t('common.openOptions')}
           </button>
           <button
             type="button"
             onClick={() => void chrome.tabs.create({ url: chrome.runtime.getURL('bookmarks.html') })}
           >
-            Bookmarks
+            {t('bookmarks.title')}
           </button>
         </div>
       }
@@ -223,4 +225,9 @@ function SidePanelApp(): JSX.Element {
 
 const root = document.getElementById('root');
 if (!root) throw new Error('JobLens side panel: #root missing');
-createRoot(root).render(<SidePanelApp />);
+ensureI18n();
+createRoot(root).render(
+  <I18nextProvider i18n={i18n}>
+    <SidePanelApp />
+  </I18nextProvider>
+);

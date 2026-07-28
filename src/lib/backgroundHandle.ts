@@ -139,6 +139,7 @@ export async function handleBackgroundRequest(raw: unknown): Promise<BackgroundH
         url: msg.url,
         pageText: truncated,
         localHintJson: JSON.stringify(local),
+        uiCulture: cfg.uiCulture,
       }),
       maxTokens: 1024,
       thinking: 'disabled',

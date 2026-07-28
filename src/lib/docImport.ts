@@ -178,7 +178,7 @@ export async function extractTextsFromFiles(files: readonly File[]): Promise<Ext
 
 /** Config snapshot sent to the model (never include apiKey). */
 export function sanitizeConfigForPropose(cfg: Config): Record<string, unknown> {
-  const { apiKey: _omit, bookmarks: _b, ...rest } = cfg;
+  const { apiKey: _omit, bookmarks: _b, theme: _t, uiCulture: _c, ...rest } = cfg;
   return {
     ...rest,
     preferences: cfg.preferences ?? DEFAULT_PREFERENCES,

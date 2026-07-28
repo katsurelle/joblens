@@ -40,6 +40,7 @@ export const DEFAULT_CONFIG: Config = {
   flagPermNotices: true,
   preferences: DEFAULT_PREFERENCES,
   theme: 'default',
+  uiCulture: 'auto',
   bookmarks: [],
 };
 
