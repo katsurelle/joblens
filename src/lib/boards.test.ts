@@ -2,11 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   BOARDS,
   MATCH_PATTERNS,
+  MIN_BOARDS_PER_LANGUAGE,
+  BOARD_COVERAGE_LANGUAGES,
   boardDisplayNames,
+  boardsForLanguage,
   getBoardById,
   resolveBoard,
   shouldShowLauncher,
 } from './boards';
+import { REGIONAL_BOARDS } from './boards/regionalBoards';
+import { REGIONAL_POSTING_CASES } from './boards/regionalPostingCases';
 
 const postingCases: Array<[string, string, boolean]> = [
   ['builtin', 'https://www.builtin.com/job/foo/123', true],
@@ -24,6 +29,8 @@ const postingCases: Array<[string, string, boolean]> = [
   ],
   ['ziprecruiter', 'https://www.ziprecruiter.com/jobs-search?q=x', false],
   ['indeed', 'https://www.indeed.com/viewjob?jk=abc', true],
+  ['indeed', 'https://www.indeed.co.uk/viewjob?jk=abc', true],
+  ['indeed', 'https://de.indeed.com/viewjob?jk=abc', true],
   [
     'indeed',
     'https://www.indeed.com/jobs?q=engineer&l=Austin%2C+TX&vjk=d75084593b7d8230',
@@ -74,6 +81,7 @@ const postingCases: Array<[string, string, boolean]> = [
     'https://www.monster.com/job-openings/software-engineer-austin-tx--123',
     true,
   ],
+  ['monster', 'https://www.monster.de/job-openings/software-engineer--123', true],
   ['monster', 'https://www.monster.com/jobs/search?q=engineer', false],
   ['himalayas', 'https://himalayas.app/companies/acme/jobs/senior-engineer', true],
   ['himalayas', 'https://himalayas.app/jobs', false],
@@ -143,8 +151,8 @@ const postingCases: Array<[string, string, boolean]> = [
 ];
 
 describe('boards', () => {
-  it('registers 25 boards and unique ids', () => {
-    expect(BOARDS).toHaveLength(25);
+  it('registers core + regional boards with unique ids', () => {
+    expect(BOARDS.length).toBe(25 + REGIONAL_BOARDS.length);
     const ids = BOARDS.map((b) => b.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
@@ -164,15 +172,21 @@ describe('boards', () => {
     expect(shouldShowLauncher(b, url)).toBe(expectPosting);
   });
 
-  it('resolveBoard finds indeed/workday/google/remoteok', () => {
+  it.each(REGIONAL_POSTING_CASES)(
+    'regional %s launcher for %s → %s',
+    (id, url, expectPosting) => {
+      const b = BOARDS.find((x) => x.id === id);
+      expect(b).toBeDefined();
+      expect(shouldShowLauncher(b, url)).toBe(expectPosting);
+    }
+  );
+
+  it('resolveBoard finds indeed/workday and regional hosts', () => {
     expect(resolveBoard('https://www.indeed.com/viewjob?jk=x', 'www.indeed.com')?.id).toBe(
       'indeed'
     );
     expect(
-      resolveBoard(
-        'https://www.indeed.com/jobs?q=x&vjk=abc123',
-        'www.indeed.com'
-      )?.id
+      resolveBoard('https://www.indeed.co.uk/viewjob?jk=x', 'www.indeed.co.uk')?.id
     ).toBe('indeed');
     expect(
       resolveBoard(
@@ -180,22 +194,38 @@ describe('boards', () => {
         'acme.wd5.myworkdayjobs.com'
       )?.id
     ).toBe('workday');
-    expect(
-      resolveBoard(
-        'https://www.google.com/about/careers/applications/jobs/results/1',
-        'www.google.com'
-      )?.id
-    ).toBe('google');
-    expect(
-      resolveBoard(
-        'https://remoteok.com/remote-jobs/remote-python-engineer-acme-1131500',
-        'remoteok.com'
-      )?.id
-    ).toBe('remoteok');
+    expect(resolveBoard('https://www.naukri.com/job-listings-x', 'www.naukri.com')?.id).toBe(
+      'naukri'
+    );
+    expect(resolveBoard('https://www.zhipin.com/job_detail/x.html', 'www.zhipin.com')?.id).toBe(
+      'bosszhipin'
+    );
+    expect(getBoardById('seek')?.name).toMatch(/SEEK/i);
   });
 
-  it('lists Remote OK among display names', () => {
-    expect(boardDisplayNames()).toContain('Remote OK');
-    expect(getBoardById('remoteok')?.name).toBe('Remote OK');
+  it('boardDisplayNames lists every board', () => {
+    const names = boardDisplayNames();
+    expect(names).toMatch(/Indeed/);
+    expect(names).toMatch(/Naukri/);
+    expect(names.split(', ').length).toBe(BOARDS.length);
   });
+});
+
+describe('board language coverage', () => {
+  it('tags every board with at least one language', () => {
+    for (const b of BOARDS) {
+      expect(b.languages?.length ?? 0).toBeGreaterThan(0);
+    }
+  });
+
+  it.each([...BOARD_COVERAGE_LANGUAGES])(
+    'provides at least 10 boards for language %s',
+    (lang) => {
+      const boards = boardsForLanguage(lang);
+      expect(
+        boards.length,
+        `${lang} only has ${boards.map((b) => b.id).join(', ')}`
+      ).toBeGreaterThanOrEqual(MIN_BOARDS_PER_LANGUAGE);
+    }
+  );
 });

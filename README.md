@@ -17,9 +17,11 @@ AI-assisted job-posting triage as a personal Chrome extension (Manifest V3). You
 
 ## Supported boards
 
-Built In, ZipRecruiter, Indeed, LinkedIn Jobs, Greenhouse, Lever, Ashby, Workday, Dice, Remotive, Remote OK, We Work Remotely, Monster, Himalayas, WorkInTexas, Wellfound, CAPPS, Robert Half, CyberCoders, USPS, Apple, Google, Meta, Microsoft, Hacker News / YC Jobs.
+**Core:** Built In, ZipRecruiter, Indeed (global country TLDs), LinkedIn Jobs, Greenhouse, Lever, Ashby, Workday, Dice, Remotive, Remote OK, We Work Remotely, Monster (EU TLDs), Himalayas, WorkInTexas, Wellfound, CAPPS, Robert Half, CyberCoders, USPS, Apple, Google, Meta, Microsoft, Hacker News / YC Jobs.
 
-The launcher appears on **posting URLs** (not search lists). Indeed also works on search results when a job is open in the split pane (`vjk=`). Add boards in [`src/lib/boards.ts`](src/lib/boards.ts).
+**Regional (language markets):** SEEK Group (SEEK / JobsDB / JobStreet), Glassdoor, CareerBuilder, Reed, Totaljobs, Adzuna, SimplyHired, Naukri, Shine, TimesJobs, foundit, Internshala, IIMJobs/Hirist, Bdjobs, Zhaopin, 51Job, Liepin, BOSS Zhipin, Lagou, Maimai, Catho, InfoJobs BR/ES/IT, Gupy, Vagas.com, BNE, Computrabajo, OCC, Bumeran, elempleo, ZonaJobs, StepStone, XING, Arbeitsagentur, Kununu, meinestadt, France Travail, APEC, HelloWork, Option Carrière, JobTeaser, Subito Lavoro, Corriere Lavoro, Jobrapido, Kalibrr, Glints, Karir, Doda, Rikunabi NEXT, MyNavi, Daijob, Wantedly, Green, Saramin, JobKorea, Wanted, Remember, Bayt, Wuzzuf, Forasna, Akhtaboot, Drjobs, GulfTalent, Tanqeeb, BrighterMonday, Fuzu, Jobberman, MyJobMag, Hot Nigerian Jobs, and related East/Southern African boards — enough for ≥10 boards per Claude-supported UI language.
+
+The launcher appears on **posting URLs** (not search lists). Indeed also works on search results when a job is open in the split pane (`vjk=`). Add boards in [`src/lib/boards.ts`](src/lib/boards.ts) (core) or [`src/lib/boards/regionalBoards.ts`](src/lib/boards/regionalBoards.ts).
 
 ## Requirements
 

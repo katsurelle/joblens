@@ -30,7 +30,7 @@ function assert(cond: unknown, msg: string): void {
   }
 }
 
-assert(BOARDS.length === 25, `boards ${BOARDS.length}`);
+assert(BOARDS.length >= 25, `boards ${BOARDS.length} (expected ≥ 25)`);
 const matches = manifest.content_scripts[0]?.matches ?? [];
 for (const p of MATCH_PATTERNS) {
   assert(matches.includes(p), `manifest has ${p}`);

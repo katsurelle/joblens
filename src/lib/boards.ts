@@ -1,43 +1,20 @@
 import type { Board, BoardId } from '../types/domain';
+import { REGIONAL_BOARDS } from './boards/regionalBoards';
+import {
+  defaultExtractPageText,
+  elementText,
+  extractBySelectors,
+} from './boardsExtract';
+import { CLAUDE_SUPPORTED_LANGUAGE_CODES } from '../i18n/claudeLanguages';
 
-const TEXT_CAP = 24_000;
+export { defaultExtractPageText } from './boardsExtract';
 
-/** Prefer innerText; fall back to textContent (jsdom / some embeds lack innerText). */
-function elementText(el: Element): string {
-  const html = el as HTMLElement;
-  return (html.innerText || el.textContent || '').trim();
-}
+/** Languages used for per-market board coverage (Claude-supported UI langs). */
+export const BOARD_COVERAGE_LANGUAGES = CLAUDE_SUPPORTED_LANGUAGE_CODES;
 
-/** Default: largest of main / article / body, capped. */
-export function defaultExtractPageText(doc: Document = document): string {
-  const candidates = [
-    doc.querySelector('[role="main"]'),
-    doc.querySelector('main'),
-    doc.querySelector('article'),
-    doc.body,
-  ].filter((el): el is Element => el != null);
+const ALL_COVERAGE_LANGS = [...BOARD_COVERAGE_LANGUAGES];
 
-  let best = '';
-  for (const el of candidates) {
-    const t = elementText(el);
-    if (t.length > best.length) best = t;
-  }
-  return best.slice(0, TEXT_CAP);
-}
-
-function extractBySelectors(doc: Document, selectors: readonly string[]): string {
-  let best = '';
-  for (const sel of selectors) {
-    for (const el of doc.querySelectorAll(sel)) {
-      const t = elementText(el);
-      if (t.length > best.length) best = t;
-    }
-  }
-  if (best.length < 200) return defaultExtractPageText(doc);
-  return best.slice(0, TEXT_CAP);
-}
-
-export const BOARDS: readonly Board[] = [
+const CORE_BOARDS: readonly Board[] = [
   {
     id: 'builtin',
     name: 'Built In',
@@ -83,10 +60,37 @@ export const BOARDS: readonly Board[] = [
   {
     id: 'indeed',
     name: 'Indeed',
-    matchPatterns: ['*://indeed.com/*', '*://*.indeed.com/*'],
+    matchPatterns: [
+      '*://indeed.com/*',
+      '*://*.indeed.com/*',
+      '*://*.indeed.co.uk/*',
+      '*://*.indeed.ca/*',
+      '*://*.indeed.com.au/*',
+      '*://*.indeed.ie/*',
+      '*://*.indeed.co.in/*',
+      '*://*.indeed.com.br/*',
+      '*://*.indeed.com.mx/*',
+      '*://*.indeed.es/*',
+      '*://*.indeed.fr/*',
+      '*://*.indeed.de/*',
+      '*://*.indeed.it/*',
+      '*://*.indeed.nl/*',
+      '*://*.indeed.be/*',
+      '*://*.indeed.ch/*',
+      '*://*.indeed.at/*',
+      '*://*.indeed.pt/*',
+      '*://*.indeed.co.jp/*',
+      '*://*.indeed.ae/*',
+      '*://*.indeed.co.za/*',
+      '*://*.indeed.com.pk/*',
+      '*://*.indeed.com.ph/*',
+      '*://*.indeed.com.ng/*',
+      '*://*.indeed.com.sg/*',
+      '*://*.indeed.hk/*',
+    ],
     isPostingUrl: (url) => {
-      if (/indeed\.com\/(?:viewjob|m\/viewjob|rc\/clk|pagead\/clk)/i.test(url)) return true;
-      if (/indeed\.com\/jobs?\/view/i.test(url)) return true;
+      if (/indeed\.[a-z.]+\/(?:viewjob|m\/viewjob|rc\/clk|pagead\/clk)/i.test(url)) return true;
+      if (/indeed\.[a-z.]+\/jobs?\/view/i.test(url)) return true;
       try {
         const u = new URL(url);
         // Standalone: jk=. Split-pane SERP: vjk= highlights the open detail card.
@@ -109,7 +113,7 @@ export const BOARDS: readonly Board[] = [
         '.jobsearch-RightPane',
       ]),
     notes:
-      'SPA: /viewjob?jk= or /jobs?…&vjk= split pane. Login walls may hide JD. Prefer vjk/jk for cache identity.',
+      'SPA: /viewjob?jk= or /jobs?…&vjk= split pane. Country TLDs included for global markets.',
   },
   {
     id: 'linkedin',
@@ -305,11 +309,23 @@ export const BOARDS: readonly Board[] = [
   {
     id: 'monster',
     name: 'Monster',
-    matchPatterns: ['*://monster.com/*', '*://*.monster.com/*'],
+    matchPatterns: [
+      '*://monster.com/*',
+      '*://*.monster.com/*',
+      '*://*.monster.co.uk/*',
+      '*://*.monster.de/*',
+      '*://*.monster.fr/*',
+      '*://*.monster.it/*',
+      '*://*.monster.es/*',
+      '*://*.monster.be/*',
+      '*://*.monster.nl/*',
+      '*://*.monster.ch/*',
+      '*://*.monster.at/*',
+    ],
     isPostingUrl: (url) =>
-      /monster\.com\/job-openings\//i.test(url) ||
-      /monster\.com\/(?:job-openning|jobid)\//i.test(url) ||
-      /monster\.com\/job\//i.test(url),
+      /monster\.[a-z.]+\/job-openings\//i.test(url) ||
+      /monster\.[a-z.]+\/(?:job-openning|jobid)\//i.test(url) ||
+      /monster\.[a-z.]+\/job\//i.test(url),
     extractPageText: (doc = document) =>
       extractBySelectors(doc, [
         '[data-testid="svx-description-container"]',
@@ -508,7 +524,71 @@ export const BOARDS: readonly Board[] = [
     },
     notes: "Scan Who's Hiring item threads or YC Jobs company role pages.",
   },
-] as const satisfies readonly Board[];
+];
+
+/** Language tags for core (pre-regional) boards used in coverage checks. */
+const CORE_LANGUAGES: Record<string, readonly string[]> = {
+  builtin: ['en'],
+  ziprecruiter: ['en'],
+  indeed: ALL_COVERAGE_LANGS,
+  linkedin: ALL_COVERAGE_LANGS,
+  greenhouse: ['en'],
+  lever: ['en'],
+  ashby: ['en'],
+  workday: ['en'],
+  dice: ['en'],
+  remotive: ['en'],
+  remoteok: ['en'],
+  weworkremotely: ['en'],
+  monster: ['en', 'de', 'fr', 'es', 'it'],
+  himalayas: ['en'],
+  workintexas: ['en'],
+  wellfound: ['en'],
+  capps: ['en'],
+  roberthalf: ['en', 'fr'],
+  cybercoders: ['en'],
+  usps: ['en'],
+  apple: ['en', 'zh', 'ja', 'de', 'fr'],
+  google: ALL_COVERAGE_LANGS,
+  meta: ['en'],
+  microsoft: ['en', 'zh', 'ja', 'de', 'fr', 'pt', 'es'],
+  hackernews: ['en'],
+};
+
+/** Extra language tags applied on top of CORE_LANGUAGES (diaspora / global boards). */
+const EXTRA_CORE_LANGUAGES: Record<string, readonly string[]> = {
+  remotive: ['en', 'bn', 'sw', 'yo', 'id', 'ar', 'ko'],
+  remoteok: ['en', 'bn', 'sw', 'yo', 'id', 'ar', 'ko'],
+  weworkremotely: ['en', 'bn', 'sw', 'yo', 'id'],
+  himalayas: ['en', 'bn', 'sw', 'yo', 'id', 'ar', 'ko'],
+  greenhouse: ['en', 'bn', 'sw', 'yo', 'id', 'ar', 'ko', 'hi'],
+  lever: ['en', 'bn', 'sw', 'yo', 'id', 'ar', 'ko'],
+  ashby: ['en', 'bn', 'sw', 'yo', 'id', 'ar', 'ko'],
+  workday: ['en', 'bn', 'sw', 'yo', 'id', 'ar', 'ko', 'hi', 'zh', 'ja'],
+  wellfound: ['en', 'bn', 'yo', 'id'],
+  dice: ['en', 'hi', 'bn'],
+};
+
+function withCoreLanguages(board: Board): Board {
+  const base = CORE_LANGUAGES[board.id] ?? ['en'];
+  const extra = EXTRA_CORE_LANGUAGES[board.id] ?? [];
+  const languages = [...new Set([...base, ...extra])];
+  return { ...board, languages };
+}
+
+export const BOARDS: readonly Board[] = [
+  ...CORE_BOARDS.map(withCoreLanguages),
+  ...REGIONAL_BOARDS,
+];
+
+/** Boards tagged for a given ISO 639-1 language (coverage helper). */
+export function boardsForLanguage(lang: string): Board[] {
+  const base = lang.toLowerCase().split('-')[0] || lang;
+  return BOARDS.filter((b) => (b.languages ?? []).some((l) => l.toLowerCase() === base));
+}
+
+/** Minimum regional/global boards expected per Claude-supported language. */
+export const MIN_BOARDS_PER_LANGUAGE = 10;
 
 /** Flat list for the Chrome manifest content_scripts.matches */
 export const MATCH_PATTERNS: string[] = [

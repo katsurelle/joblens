@@ -472,32 +472,7 @@ export type DeterministicGeo = {
   distanceMiles: number;
 };
 
-export type BoardId =
-  | 'builtin'
-  | 'ziprecruiter'
-  | 'indeed'
-  | 'linkedin'
-  | 'greenhouse'
-  | 'lever'
-  | 'ashby'
-  | 'workday'
-  | 'dice'
-  | 'remotive'
-  | 'remoteok'
-  | 'weworkremotely'
-  | 'monster'
-  | 'himalayas'
-  | 'workintexas'
-  | 'wellfound'
-  | 'capps'
-  | 'roberthalf'
-  | 'cybercoders'
-  | 'usps'
-  | 'apple'
-  | 'google'
-  | 'meta'
-  | 'microsoft'
-  | 'hackernews';
+export type BoardId = string;
 
 export type Board = {
   id: BoardId;
@@ -510,6 +485,13 @@ export type Board = {
   resolveJobUrl?: (doc: Document, url: string) => string;
   extractPageText?: (doc?: Document) => string;
   notes?: string;
+  /**
+   * ISO 639-1 language codes this board primarily serves
+   * (used for per-language coverage checks).
+   */
+  languages?: readonly string[];
+  /** ISO 3166-1 alpha-2 countries where this board is a primary market. */
+  countries?: readonly string[];
 };
 
 export type PanelController = {
