@@ -1,4 +1,4 @@
-import type { Board, BoardId } from '../types/domain';
+import type { Board } from '../types/domain';
 import { REGIONAL_BOARDS } from './boards/regionalBoards';
 import {
   defaultExtractPageText,
@@ -599,8 +599,18 @@ export function boardDisplayNames(): string {
   return BOARDS.map((b) => b.name).join(', ');
 }
 
-export function getBoardById(id: BoardId): Board | undefined {
+export function getBoardById(id: string): Board | undefined {
   return BOARDS.find((b) => b.id === id);
+}
+
+/** Soft country hint from board metadata (first listed market). */
+export function boardCountryHint(url: string): string | null {
+  const board = resolveBoard(url);
+  const countries = board?.countries;
+  if (!countries?.length) return null;
+  const raw = countries[0];
+  if (!raw) return null;
+  return raw.toUpperCase() === 'UK' ? 'GB' : raw.toUpperCase();
 }
 
 export function resolveBoard(
@@ -610,7 +620,7 @@ export function resolveBoard(
   const host = hostname.replace(/^www\./, '').toLowerCase();
   for (const board of BOARDS) {
     const hit = board.matchPatterns.some((p) => {
-      const m = p.match(/^\*:\/\/([^/]+)(?:\/.*)?$/);
+      const m = /^\*:\/\/([^/]+)(?:\/.*)?$/.exec(p);
       if (!m?.[1]) return false;
       let patHost = m[1];
       if (patHost.startsWith('*.')) patHost = patHost.slice(2);
@@ -710,11 +720,13 @@ function ldJsonNodes(scriptText: string): unknown[] {
 function itemListEntries(node: unknown): unknown[] {
   if (!node || typeof node !== 'object') return [];
   const typed = node as { '@type'?: string | string[]; itemListElement?: unknown[] };
-  const types = Array.isArray(typed['@type'])
-    ? typed['@type']
-    : typed['@type']
-      ? [typed['@type']]
-      : [];
+  const typeField = typed['@type'];
+  let types: string[] = [];
+  if (Array.isArray(typeField)) {
+    types = typeField;
+  } else if (typeField) {
+    types = [typeField];
+  }
   if (!types.some((t) => String(t).toLowerCase() === 'itemlist')) return [];
   return typed.itemListElement ?? [];
 }
@@ -737,7 +749,7 @@ function resolveZipJobUrlFromJsonLd(doc: Document, title: string): string | null
     for (const node of ldJsonNodes(script.textContent || '')) {
       for (const entry of itemListEntries(node)) {
         const parsed = entryNameAndUrl(entry);
-        if (parsed && parsed.name === title) return parsed.url;
+        if (parsed?.name === title) return parsed.url;
       }
     }
   }

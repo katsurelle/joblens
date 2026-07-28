@@ -147,13 +147,25 @@ export const DEFAULT_APPLY: ApplyRating = {
   rationale: '',
 };
 
+export const RadiusUnitSchema = z.enum(['mi', 'km']);
+export type RadiusUnit = z.infer<typeof RadiusUnitSchema>;
+
 export const LocationSchema = z.object({
-  zip: z.string(),
+  id: z.string().min(1).optional(),
+  /** @deprecated Prefer postalCode; kept for storage migration. */
+  zip: z.string().default(''),
+  /** Operator commute postal / ZIP code (preferred over zip). */
+  postalCode: z.string().optional(),
+  /** ISO 3166-1 alpha-2 for this hub; defaults to config.homeCountry when omitted. */
+  country: z.string().optional(),
   radiusMiles: z.number().finite().nonnegative(),
+  /** Display/input unit for radiusMiles (value is in this unit). Defaults to mi when omitted. */
+  radiusUnit: RadiusUnitSchema.optional(),
 });
 export type Location = z.infer<typeof LocationSchema>;
 
 export const WorkHistoryEntrySchema = z.object({
+  id: z.string().min(1).optional(),
   org: z.string(),
   title: z.string(),
   start: z.string(),
@@ -175,6 +187,7 @@ export const SkillStandingSchema = z.enum(['held', 'ramp', 'never_claim']);
 export type SkillStanding = z.infer<typeof SkillStandingSchema>;
 
 export const SkillClaimSchema = z.object({
+  id: z.string().min(1).optional(),
   skill: z.string(),
   standing: SkillStandingSchema.default('held'),
   years: z.number().finite().nonnegative().optional(),
@@ -388,6 +401,11 @@ export const ConfigSchema = z.object({
   education: z.string().default(''),
   /** Free-text work-authorization note for matching (no personal identity required). */
   workAuthorizationNote: z.string().default(''),
+  /**
+   * Primary market for postal packs, region normalization, and geography UI labels.
+   * ISO 3166-1 alpha-2 (UK stored as GB).
+   */
+  homeCountry: z.string().default('US'),
   locations: z.array(LocationSchema).default([]),
   workEligibleRegions: z.array(z.string()).default([]),
   proficiencies: z.array(z.string()).default([]),
@@ -472,10 +490,8 @@ export type DeterministicGeo = {
   distanceMiles: number;
 };
 
-export type BoardId = string;
-
 export type Board = {
-  id: BoardId;
+  id: string;
   name: string;
   matchPatterns: readonly string[];
   isPostingUrl?: (url: string) => boolean;

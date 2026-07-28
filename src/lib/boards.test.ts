@@ -152,7 +152,7 @@ const postingCases: Array<[string, string, boolean]> = [
 
 describe('boards', () => {
   it('registers core + regional boards with unique ids', () => {
-    expect(BOARDS.length).toBe(25 + REGIONAL_BOARDS.length);
+    expect(BOARDS).toHaveLength(25 + REGIONAL_BOARDS.length);
     const ids = BOARDS.map((b) => b.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
@@ -207,7 +207,7 @@ describe('boards', () => {
     const names = boardDisplayNames();
     expect(names).toMatch(/Indeed/);
     expect(names).toMatch(/Naukri/);
-    expect(names.split(', ').length).toBe(BOARDS.length);
+    expect(names.split(', ')).toHaveLength(BOARDS.length);
   });
 });
 

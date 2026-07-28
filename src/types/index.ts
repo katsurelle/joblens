@@ -2,7 +2,6 @@ export type {
   Analysis,
   Bookmark,
   Board,
-  BoardId,
   ClearancePolicy,
   CompensationMode,
   Config,

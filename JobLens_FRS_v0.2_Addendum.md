@@ -48,9 +48,12 @@ This addendum locks Phase 1–2 of the improvement plan using **plan defaults** 
 
 | ID | Priority | Requirement |
 |---|---|---|
-| FR-GEO-01 | M | When a US ZIP can be resolved from the posting text and operator locations have centroids, onsite/hybrid geo uses haversine distance vs configured radius (`method: "zip-haversine"`). |
-| FR-GEO-02 | M | Deterministic geo overrides the model geo for onsite/hybrid/unclear when computable; remote residency remains model judgment. |
+| FR-GEO-01 | M | When a postal code (US ZIP or curated CA/GB/IE/AU pack) can be resolved from the posting text and operator locations have centroids, onsite/hybrid geo uses haversine distance vs configured radius (`method: "zip-haversine"`). |
+| FR-GEO-02 | M | Deterministic geo overrides the model geo for onsite/hybrid/unclear when computable; remote residency remains model + local region/country matching. |
 | FR-GEO-03 | S | Panel marks computed geo with a "computed" badge. |
+| FR-GEO-04 | M | Config includes `homeCountry` (ISO 3166-1); locations may include `postalCode`, `country`, and `radiusUnit` (`mi`/`km`). Legacy `zip` remains an alias. |
+| FR-GEO-05 | M | Remote residency country allow-lists (US/CA/UK/WEU/EU/AU/IE) match candidate regions including provinces and ISO country codes — not only US states. |
+| FR-GEO-06 | S | Board `countries` metadata may supply a soft `countryHint` so non-US boards do not false-match US ZIP5 codes. |
 
 ### Polish
 
@@ -63,7 +66,9 @@ This addendum locks Phase 1–2 of the improvement plan using **plan defaults** 
 
 ## Explicitly still out of scope
 
-Unchanged from parent §1.3 except where overridden above: auto-scan, ATS primary-page backfill, Notion/Obsidian write-back, non-ZIP location entry UI, multi-user sync.
+Unchanged from parent §1.3 except where overridden above: auto-scan, ATS primary-page backfill, Notion/Obsidian write-back, map-picker / free-form city-only commute without a postal pack, full worldwide postal dumps, multi-user sync.
+
+**Superseded:** “Non-US postal codes” are no longer globally out of scope — CA/GB/IE/AU ship as curated packs; other markets remain model/`unclear` until a pack exists.
 
 ---
 
@@ -73,6 +78,8 @@ Unchanged from parent §1.3 except where overridden above: auto-scan, ATS primar
 - [x] Launcher absent on Indeed/LinkedIn **search** URLs; present on a posting URL pattern for each board (URL-test unit checks via `npm run smoke`).
 - [x] Copy JSON from panel/bookmarks yields parseable `joblens.triage/v1`.
 - [x] Given posting text containing ZIP `78701` and a configured location `78758`/25mi, geo method is `zip-haversine` with a numeric distance.
+- [x] Given a Canada homeCountry + Toronto postal hub and Toronto onsite fixture, geo resolves via the CA pack.
+- [x] Turing-shape US/Canada/WEU allow-list clears candidate regions `ON`, `GB`, or `DE` as well as US states.
 - [ ] Parent MVP DoD still applies for Built In + ZipRecruiter once loaded in Chrome with an API key.
 
 ---

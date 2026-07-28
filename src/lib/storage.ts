@@ -1,11 +1,8 @@
 import type {
   Bookmark,
   Config,
-  Location,
   Preferences,
   SkillClaim,
-  WorkHistoryEntry,
-  ExtractedSkill,
 } from '../types/domain';
 import {
   ConfigSchema,
@@ -22,13 +19,17 @@ import {
   SHELL_EMPLOYER_SKIP_TRIGGER,
   SKIP_CATEGORY_TRIGGERS,
 } from './settingsOptions';
+import { defaultRadiusUnit, geoLabelsForCountry, normalizeHomeCountry } from './homeCountry';
+import { locationPostalCode } from './postalDirectory';
 
+export type { Config, Bookmark, Location, WorkHistoryEntry, ExtractedSkill } from '../types/domain';
 export const DEFAULT_CONFIG: Config = {
   apiKey: '',
   model: DEFAULT_CLAUDE_MODEL,
   preflightMode: 'auto',
   education: '',
   workAuthorizationNote: '',
+  homeCountry: 'US',
   locations: [],
   workEligibleRegions: [],
   proficiencies: [],
@@ -44,12 +45,34 @@ export const DEFAULT_CONFIG: Config = {
   bookmarks: [],
 };
 
+function parseStoredSkillClaims(raw: unknown): SkillClaim[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  return raw
+    .map((row) => SkillClaimSchema.safeParse(row))
+    .flatMap((r) => (r.success ? [r.data] : []));
+}
+
+function skillClaimConfidence(value: unknown): SkillClaim['confidence'] | undefined {
+  if (value === 'high' || value === 'medium' || value === 'low') return value;
+  return undefined;
+}
+
+function claimFromExtractedSkill(row: unknown): SkillClaim | null {
+  if (!row || typeof row !== 'object') return null;
+  const s = row as Record<string, unknown>;
+  if (typeof s.skill !== 'string') return null;
+  return {
+    skill: s.skill.trim(),
+    standing: 'held',
+    years: typeof s.years === 'number' ? s.years : undefined,
+    confidence: skillClaimConfidence(s.confidence),
+    scopeNote: typeof s.source === 'string' ? s.source : undefined,
+  };
+}
+
 function seedSkillClaims(raw: Record<string, unknown>): SkillClaim[] {
-  if (Array.isArray(raw.skillClaims) && raw.skillClaims.length > 0) {
-    return (raw.skillClaims as unknown[])
-      .map((row) => SkillClaimSchema.safeParse(row))
-      .flatMap((r) => (r.success ? [r.data] : []));
-  }
+  const stored = parseStoredSkillClaims(raw.skillClaims);
+  if (stored) return stored;
 
   const claims: SkillClaim[] = [];
   const seen = new Set<string>();
@@ -73,16 +96,12 @@ function seedSkillClaims(raw: Record<string, unknown>): SkillClaim[] {
 
   if (Array.isArray(raw.extractedSkills)) {
     for (const row of raw.extractedSkills) {
-      if (!row || typeof row !== 'object') continue;
-      const s = row as Record<string, unknown>;
-      if (typeof s.skill !== 'string') continue;
-      add(s.skill, 'held', {
-        years: typeof s.years === 'number' ? s.years : undefined,
-        confidence:
-          s.confidence === 'high' || s.confidence === 'medium' || s.confidence === 'low'
-            ? s.confidence
-            : undefined,
-        scopeNote: typeof s.source === 'string' ? s.source : undefined,
+      const claim = claimFromExtractedSkill(row);
+      if (!claim) continue;
+      add(claim.skill, claim.standing, {
+        years: claim.years,
+        confidence: claim.confidence,
+        scopeNote: claim.scopeNote,
       });
     }
   }
@@ -122,6 +141,36 @@ function migratePreferences(raw: Record<string, unknown>): Preferences {
   return parsed.success ? parsed.data : { ...DEFAULT_PREFERENCES, flagPermNotices: topFlag };
 }
 
+function migrateLocations(
+  raw: unknown,
+  homeCountry: string
+): unknown {
+  if (!Array.isArray(raw)) return raw;
+  const unit = defaultRadiusUnit(homeCountry);
+  return raw.map((row) => {
+    if (!row || typeof row !== 'object') return row;
+    const loc = row as Record<string, unknown>;
+    const zip = typeof loc['zip'] === 'string' ? loc['zip'] : '';
+    const postalCode =
+      typeof loc.postalCode === 'string' && loc.postalCode.trim()
+        ? loc.postalCode
+        : zip;
+    return {
+      ...loc,
+      zip: postalCode || zip,
+      postalCode: postalCode || zip,
+      country:
+        typeof loc.country === 'string' && loc.country.trim()
+          ? normalizeHomeCountry(String(loc.country))
+          : homeCountry,
+      radiusUnit:
+        loc.radiusUnit === 'km' || loc.radiusUnit === 'mi'
+          ? loc.radiusUnit
+          : unit,
+    };
+  });
+}
+
 function migrateConfigShape(raw: Record<string, unknown>): Record<string, unknown> {
   const next: Record<string, unknown> = { ...raw };
 
@@ -132,9 +181,8 @@ function migrateConfigShape(raw: Record<string, unknown>): Record<string, unknow
     );
     const hadPerm = triggers.some(isPermSkipTrigger);
     next.skipTriggers = triggers.filter((t) => !isPermSkipTrigger(t));
-    if (typeof next.flagPermNotices !== 'boolean') {
-      next.flagPermNotices = true;
-    } else if (hadPerm) {
+    // Legacy PERM trigger text → dedicated flag; also default unset → true.
+    if (hadPerm || typeof next.flagPermNotices !== 'boolean') {
       next.flagPermNotices = true;
     }
   } else if (typeof next.flagPermNotices !== 'boolean') {
@@ -144,6 +192,12 @@ function migrateConfigShape(raw: Record<string, unknown>): Record<string, unknow
   if (typeof next.workAuthorizationNote !== 'string') {
     next.workAuthorizationNote = '';
   }
+
+  const homeCountry = normalizeHomeCountry(
+    typeof next.homeCountry === 'string' ? next.homeCountry : 'US'
+  );
+  next.homeCountry = homeCountry;
+  next.locations = migrateLocations(next.locations, homeCountry);
 
   next.preferences = migratePreferences(next);
   next.flagPermNotices = (next.preferences as Preferences).flagPermNotices;
@@ -264,12 +318,12 @@ export type ProfileCompleteness = {
   message: string;
 };
 
-/** ZIP locations, remote regions, or explicit remote-only — any one unlocks Scan. */
+/** Postal locations, remote regions, or explicit remote-only — any one unlocks Scan. */
 export function hasGeoIntent(cfg: Config): boolean {
   const prefs = cfg.preferences ?? DEFAULT_PREFERENCES;
   if (prefs.remoteOnly) return true;
   if (cfg.workEligibleRegions.length > 0) return true;
-  return cfg.locations.some((l) => l.zip.trim());
+  return cfg.locations.some((l) => Boolean(locationPostalCode(l)));
 }
 
 export function hasHeldSkills(cfg: Config): boolean {
@@ -280,9 +334,6 @@ export function hasHeldSkills(cfg: Config): boolean {
   );
 }
 
-const GEO_REQUIRED_MESSAGE =
-  'Geography required for Scan: add a ZIP, remote regions, or turn on Remote only in Options.';
-
 const SKILLS_SOFT_MESSAGE =
   'No held skills yet — Fit will be generic. Add skills in Options when you can.';
 
@@ -291,7 +342,9 @@ export function assessProfileCompleteness(cfg: Config): ProfileCompleteness {
   const hasSkills = hasHeldSkills(cfg);
   const hasGeo = hasGeoIntent(cfg);
   const incomplete = !hasGeo;
-  const geoRequiredMessage = incomplete ? GEO_REQUIRED_MESSAGE : '';
+  const geoRequiredMessage = incomplete
+    ? geoLabelsForCountry(cfg.homeCountry).geoRequiredMessage
+    : '';
   const skillsWarning = hasGeo && !hasSkills ? SKILLS_SOFT_MESSAGE : '';
   const message = geoRequiredMessage || skillsWarning;
 
@@ -304,5 +357,3 @@ export function assessProfileCompleteness(cfg: Config): ProfileCompleteness {
     message,
   };
 }
-
-export type { Config, Bookmark, Location, WorkHistoryEntry, ExtractedSkill };

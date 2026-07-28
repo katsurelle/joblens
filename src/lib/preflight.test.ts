@@ -40,6 +40,7 @@ import {
   MADISON_NATIONWIDE,
   TURING_US_CANADA_WEU,
   UST_REMOTE_US,
+  REMOTE_UK,
 } from '../../tests/fixtures/postings';
 
 describe('preflight', () => {
@@ -482,5 +483,16 @@ describe('preflight', () => {
       )
     ).toBe(true);
     expect(shouldSkipHaiku(clear, makeConfig())).toBe(false);
+  });
+
+  it('US/Canada/WEU OR-list clears Ontario candidate regions', () => {
+    expect(evaluateRemoteResidency(TURING_US_CANADA_WEU, ['ON'], 'CA').verdict).toBe('clear');
+    expect(evaluateRemoteResidency(TURING_US_CANADA_WEU, ['GB'], 'GB').verdict).toBe('clear');
+    expect(evaluateRemoteResidency(TURING_US_CANADA_WEU, ['DE'], 'DE').verdict).toBe('clear');
+  });
+
+  it('Remote-UK clears GB regions and not US-only lists', () => {
+    expect(evaluateRemoteResidency(REMOTE_UK, ['GB', 'ENG'], 'GB').verdict).toBe('clear');
+    expect(evaluateRemoteResidency(REMOTE_UK, ['TX', 'PA'], 'US').verdict).not.toBe('clear');
   });
 });

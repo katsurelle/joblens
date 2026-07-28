@@ -29,7 +29,23 @@ export function isExtensionContextValid(): boolean {
 }
 
 function messagingError(err: unknown, fallback: string): string {
-  const msg = err instanceof Error ? err.message : String(err ?? '');
+  let msg = '';
+  if (err instanceof Error) {
+    msg = err.message;
+  } else if (typeof err === 'string') {
+    msg = err;
+  } else if (typeof err === 'number' || typeof err === 'boolean' || typeof err === 'bigint') {
+    msg = String(err);
+  } else if (err && typeof err === 'object' && 'message' in err) {
+    const nested = (err as { message: unknown }).message;
+    if (typeof nested === 'string') msg = nested;
+  } else if (err != null) {
+    try {
+      msg = JSON.stringify(err) ?? '';
+    } catch {
+      msg = '';
+    }
+  }
   if (/extension context invalidated/i.test(msg)) return RELOAD_HINT;
   return msg.trim() || fallback;
 }
@@ -109,11 +125,12 @@ export function proposeConfigFromDocs(req: {
 }
 
 export function openSidePanel(
-  opts: { startScan?: boolean } = {}
+  opts: { startScan?: boolean; tabId?: number } = {}
 ): Promise<ExtensionResponse<{ opened: true }>> {
   const message: OpenSidePanelRequest = {
     type: 'OPEN_SIDE_PANEL',
     startScan: opts.startScan,
+    tabId: opts.tabId,
   };
   return sendMessage(message);
 }

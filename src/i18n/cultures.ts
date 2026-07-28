@@ -302,9 +302,92 @@ export function getCultureById(id: string): CultureDefinition | undefined {
   return SUPPORTED_CULTURES.find((c) => c.id === id);
 }
 
+/** Always returns a culture (falls back to DEFAULT_CULTURE_ID). */
+export function requireCulture(id: string): CultureDefinition {
+  const found = getCultureById(id) || getCultureById(DEFAULT_CULTURE_ID);
+  if (found) return found;
+  // Registry is compile-time constant; this is a hard invariant.
+  const first = SUPPORTED_CULTURES[0];
+  if (!first) throw new Error('JobLens cultures registry is empty');
+  return first;
+}
+
 export function cultureLanguagePromptName(cultureId: string): string {
-  const c = getCultureById(cultureId) || getCultureById(DEFAULT_CULTURE_ID)!;
+  const c = requireCulture(cultureId);
   return CLAUDE_LANGUAGE_PROMPT_NAMES[c.language];
+}
+
+function mapGet(map: Map<string, string>, key: string): string | undefined {
+  return map.get(key);
+}
+
+const LANGUAGE_DEFAULTS: Record<string, string> = {
+  en: 'en-US',
+  es: 'es-MX',
+  pt: 'pt-BR',
+  fr: 'fr-FR',
+  de: 'de-DE',
+  it: 'it-IT',
+  id: 'id-ID',
+  ja: 'ja-JP',
+  ko: 'ko-KR',
+  hi: 'hi-IN',
+  bn: 'bn-IN',
+  ar: 'ar-EG',
+  sw: 'sw-KE',
+  yo: 'yo-NG',
+  zh: 'zh-Hans-CN',
+};
+
+/** Prefer exact BCP 47, then zh → Hans mapping, in browser tag order. */
+function matchExactOrZh(
+  tags: readonly string[],
+  byId: Map<string, string>,
+  supported: readonly CultureDefinition[]
+): string | undefined {
+  for (const tag of tags) {
+    const lower = tag.toLowerCase();
+    const exact = mapGet(byId, lower);
+    if (exact) return exact;
+    if (!lower.startsWith('zh')) continue;
+    const region = lower.split('-')[1]?.toUpperCase();
+    const hans = region ? `zh-Hans-${region}` : 'zh-Hans-CN';
+    const hansId = mapGet(byId, hans.toLowerCase());
+    if (hansId) return hansId;
+    const anyZh = supported.find((c) => c.language === 'zh');
+    if (anyZh) return anyZh.id;
+  }
+  return undefined;
+}
+
+function matchLangRegion(tags: readonly string[], byId: Map<string, string>): string | undefined {
+  for (const tag of tags) {
+    const parts = tag.toLowerCase().split('-');
+    const lang = parts[0] || '';
+    const region = parts[1]?.toUpperCase();
+    if (!lang || !region) continue;
+    const hit = mapGet(byId, `${lang}-${region}`.toLowerCase());
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+function matchLangOnly(
+  tags: readonly string[],
+  byId: Map<string, string>,
+  supported: readonly CultureDefinition[]
+): string | undefined {
+  for (const tag of tags) {
+    const lang = tag.toLowerCase().split('-')[0] || '';
+    const preferred = LANGUAGE_DEFAULTS[lang];
+    if (preferred) {
+      const hit = mapGet(byId, preferred.toLowerCase());
+      if (hit) return hit;
+    }
+    const any = supported.find((c) => c.language === lang);
+    if (any) return any.id;
+  }
+  return undefined;
 }
 
 /**
@@ -316,65 +399,18 @@ export function resolveCultureFromBrowser(
   supported: readonly CultureDefinition[] = SUPPORTED_CULTURES
 ): string {
   const normalized = browserTags
-    .map((t) => t.trim().replace(/_/g, '-'))
+    .map((t) => t.trim().replaceAll('_', '-'))
     .filter(Boolean);
   if (!normalized.length) return DEFAULT_CULTURE_ID;
 
   const byId = new Map(supported.map((c) => [c.id.toLowerCase(), c.id]));
 
-  for (const tag of normalized) {
-    const lower = tag.toLowerCase();
-    if (byId.has(lower)) return byId.get(lower)!;
-    // zh-CN → zh-Hans-CN
-    if (lower.startsWith('zh')) {
-      const region = lower.split('-')[1]?.toUpperCase();
-      const hans = region ? `zh-Hans-${region}` : 'zh-Hans-CN';
-      if (byId.has(hans.toLowerCase())) return byId.get(hans.toLowerCase())!;
-      const anyZh = supported.find((c) => c.language === 'zh');
-      if (anyZh) return anyZh.id;
-    }
-  }
-
-  for (const tag of normalized) {
-    const parts = tag.toLowerCase().split('-');
-    const lang = parts[0] || '';
-    const region = parts[1]?.toUpperCase();
-    if (lang && region) {
-      const candidate = `${lang}-${region}`.toLowerCase();
-      if (byId.has(candidate)) return byId.get(candidate)!;
-    }
-  }
-
-  // Language-only: prefer a canonical region per language
-  const languageDefaults: Record<string, string> = {
-    en: 'en-US',
-    es: 'es-MX',
-    pt: 'pt-BR',
-    fr: 'fr-FR',
-    de: 'de-DE',
-    it: 'it-IT',
-    id: 'id-ID',
-    ja: 'ja-JP',
-    ko: 'ko-KR',
-    hi: 'hi-IN',
-    bn: 'bn-IN',
-    ar: 'ar-EG',
-    sw: 'sw-KE',
-    yo: 'yo-NG',
-    zh: 'zh-Hans-CN',
-  };
-
-  for (const tag of normalized) {
-    const lang = tag.toLowerCase().split('-')[0] || '';
-    const preferred = languageDefaults[lang];
-    if (preferred && byId.has(preferred.toLowerCase())) {
-      return byId.get(preferred.toLowerCase())!;
-    }
-    const any = supported.find((c) => c.language === lang || (lang === 'zh' && c.language === 'zh'));
-    if (any) return any.id;
-  }
-
-  return DEFAULT_CULTURE_ID;
+  return (
+    matchExactOrZh(normalized, byId, supported) ??
+    matchLangRegion(normalized, byId) ??
+    matchLangOnly(normalized, byId, supported) ??
+    DEFAULT_CULTURE_ID
+  );
 }
 
 export function readBrowserLanguageTags(

@@ -33,7 +33,7 @@ function defineRegional(def: RegionalDef): Board {
     countries: def.countries,
     notes: def.notes,
     extractPageText: def.selectors
-      ? (doc = document) => extractBySelectors(doc, def.selectors!)
+      ? (doc = document) => extractBySelectors(doc, def.selectors as readonly string[])
       : undefined,
   };
 }

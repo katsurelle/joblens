@@ -10,6 +10,22 @@ void chrome.sidePanel
     console.warn('JobLens: setPanelBehavior failed', err);
   });
 
+async function openSidePanelForTab(
+  tabId: number,
+  startScan: boolean
+): Promise<{ ok: true; data: { opened: true } } | { ok: false; error: string }> {
+  try {
+    if (startScan) {
+      await chrome.storage.session.set({ pendingScan: true, pendingScanTabId: tabId });
+    }
+    await chrome.sidePanel.open({ tabId });
+    return { ok: true, data: { opened: true } };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: message };
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
   if (
     msg &&
@@ -21,27 +37,13 @@ chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
 
   const openReq = OpenSidePanelRequestSchema.safeParse(msg);
   if (openReq.success) {
-    const tabId = sender.tab?.id;
+    const tabId = openReq.data.tabId ?? sender.tab?.id;
     if (tabId == null) {
       sendResponse({ ok: false, error: 'No tab for side panel open.' });
       return false;
     }
     const startScan = openReq.data.startScan !== false;
-    try {
-      if (startScan) {
-        void chrome.storage.session.set({ pendingScan: true, pendingScanTabId: tabId });
-      }
-      void chrome.sidePanel.open({ tabId }).then(
-        () => sendResponse({ ok: true, data: { opened: true } }),
-        (err: unknown) => {
-          const message = err instanceof Error ? err.message : String(err);
-          sendResponse({ ok: false, error: message });
-        }
-      );
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      sendResponse({ ok: false, error: message });
-    }
+    void openSidePanelForTab(tabId, startScan).then(sendResponse);
     return true;
   }
 

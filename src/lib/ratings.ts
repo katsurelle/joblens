@@ -155,6 +155,112 @@ function raiseApply(apply: ApplyRating, min: ApplyVerdict, rationaleExtra: strin
   };
 }
 
+function withDealbreaker(
+  analysis: Analysis,
+  requirement: string,
+  evidence: string,
+  reason: string
+): Analysis {
+  if (analysis.dealbreakers.some((d) => d.requirement === requirement)) return analysis;
+  return {
+    ...analysis,
+    dealbreakers: [...analysis.dealbreakers, { requirement, evidence, reason }],
+  };
+}
+
+function applyRemoteOnlyDealbreaker(analysis: Analysis, cfg?: Config | null): Analysis {
+  const prefs = prefsOf(cfg);
+  const wm = analysis.masthead.workModel;
+  if (!prefs?.remoteOnly || (wm !== 'onsite' && wm !== 'hybrid')) return analysis;
+  return withDealbreaker(
+    analysis,
+    REMOTE_ONLY_DEALBREAKER,
+    `workModel=${wm}`,
+    'preferences.remoteOnly is enabled'
+  );
+}
+
+function applyBlockedEmployerDealbreaker(analysis: Analysis, cfg?: Config | null): Analysis {
+  const blockedHit = findBlockedEmployerHit(
+    analysis.masthead.organization,
+    prefsOf(cfg)?.blockedEmployers
+  );
+  if (!blockedHit) return analysis;
+  return withDealbreaker(
+    analysis,
+    BLOCKED_EMPLOYER_DEALBREAKER,
+    analysis.masthead.organization.trim(),
+    `Matched blocked employer "${blockedHit}"`
+  );
+}
+
+function forceApplyNo(apply: ApplyRating, reason: string): ApplyRating {
+  if (apply.verdict === 'no') return apply;
+  return {
+    verdict: 'no',
+    rationale: [apply.rationale, reason].filter(Boolean).join(' ').trim(),
+  };
+}
+
+function applyHardGateCaps(
+  fit: FitRating,
+  apply: ApplyRating,
+  hasDb: boolean,
+  geoExcluded: boolean
+): { fit: FitRating; apply: ApplyRating } {
+  if (!hasDb && !geoExcluded) return { fit, apply };
+  return {
+    fit: capFitAt(fit, FIT_FLOOR_UNLIKELY, 'Fit capped at Unlikely: hard gate present.'),
+    apply: forceApplyNo(
+      apply,
+      hasDb ? 'Apply forced to no: hard dealbreaker present.' : 'Apply forced to no: geo excluded.'
+    ),
+  };
+}
+
+function applyScamCaps(
+  fit: FitRating,
+  apply: ApplyRating,
+  scam: boolean
+): { fit: FitRating; apply: ApplyRating } {
+  if (!scam) return { fit, apply };
+  return {
+    fit: { label: 'Poor fit', score: 0, rationale: fit.rationale || 'Scam / shell signals.' },
+    apply: forceApplyNo(apply, 'Apply no: scam / shell signals.'),
+  };
+}
+
+function applySoftEvidenceLifts(
+  analysis: Analysis,
+  fit: FitRating,
+  apply: ApplyRating,
+  hardGate: boolean
+): { fit: FitRating; apply: ApplyRating } {
+  if (hardGate) return { fit, apply };
+
+  const strength = skillEvidenceStrength(analysis);
+  if (strength === 'strong') {
+    return {
+      fit: floorFitAt(fit, FIT_FLOOR_STRONG, 'Fit raised: skills substantially match with no hard gates.'),
+      apply: raiseApply(apply, 'yes', 'Apply raised: no hard gates and strong skill evidence.'),
+    };
+  }
+  if (strength === 'good') {
+    return {
+      fit: floorFitAt(fit, FIT_FLOOR_GOOD, 'Fit raised: solid skill matches with no hard gates.'),
+      apply: raiseApply(apply, 'maybe', 'Apply raised from no: no hard gates.'),
+    };
+  }
+  const geoOk = analysis.geo?.verdict === 'eligible' || analysis.geo?.verdict === 'unclear';
+  if (geoOk && (fit.score === 0 || apply.verdict === 'no')) {
+    return {
+      fit: floorFitAt(fit, FIT_FLOOR_UNLIKELY, 'Fit raised from Poor: no hard gates triggered.'),
+      apply: raiseApply(apply, 'maybe', 'Apply raised from no: no hard gates.'),
+    };
+  }
+  return { fit, apply };
+}
+
 /**
  * Cap Fit/Apply when hard gates fire; lift contradictory Poor/No when they do not.
  *
@@ -165,95 +271,17 @@ export function applyRatingFloors(analysis: Analysis, cfg?: Config | null): Anal
     ...analysis,
     dealbreakers: normalizeDealbreakerTitles(analysis.dealbreakers),
   };
-
-  const prefs = prefsOf(cfg);
-  const wm = next.masthead.workModel;
-  if (prefs?.remoteOnly && (wm === 'onsite' || wm === 'hybrid')) {
-    const already = next.dealbreakers.some((d) => d.requirement === REMOTE_ONLY_DEALBREAKER);
-    if (!already) {
-      next = {
-        ...next,
-        dealbreakers: [
-          ...next.dealbreakers,
-          {
-            requirement: REMOTE_ONLY_DEALBREAKER,
-            evidence: `workModel=${wm}`,
-            reason: 'preferences.remoteOnly is enabled',
-          },
-        ],
-      };
-    }
-  }
-
-  const blockedHit = findBlockedEmployerHit(next.masthead.organization, prefs?.blockedEmployers);
-  if (blockedHit) {
-    const already = next.dealbreakers.some((d) => d.requirement === BLOCKED_EMPLOYER_DEALBREAKER);
-    if (!already) {
-      next = {
-        ...next,
-        dealbreakers: [
-          ...next.dealbreakers,
-          {
-            requirement: BLOCKED_EMPLOYER_DEALBREAKER,
-            evidence: next.masthead.organization.trim(),
-            reason: `Matched blocked employer "${blockedHit}"`,
-          },
-        ],
-      };
-    }
-  }
+  next = applyRemoteOnlyDealbreaker(next, cfg);
+  next = applyBlockedEmployerDealbreaker(next, cfg);
 
   const hasDb = next.dealbreakers.length > 0;
   const geoExcluded = next.geo?.verdict === 'excluded';
   const scam = looksLikeScam(next);
   const hardGate = hasDb || geoExcluded || scam;
 
-  let fit = next.fit;
-  let apply = next.apply;
-
-  if (hasDb || geoExcluded) {
-    if (apply.verdict !== 'no') {
-      apply = {
-        verdict: 'no',
-        rationale: [
-          apply.rationale,
-          hasDb
-            ? 'Apply forced to no: hard dealbreaker present.'
-            : 'Apply forced to no: geo excluded.',
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .trim(),
-      };
-    }
-    fit = capFitAt(fit, FIT_FLOOR_UNLIKELY, 'Fit capped at Unlikely: hard gate present.');
-  }
-
-  if (scam) {
-    fit = { label: 'Poor fit', score: 0, rationale: fit.rationale || 'Scam / shell signals.' };
-    apply = {
-      verdict: 'no',
-      rationale: [apply.rationale, 'Apply no: scam / shell signals.'].filter(Boolean).join(' ').trim(),
-    };
-  }
-
-  // Lift contradictory Poor/No only when no hard disqualifier remains after preference merge.
-  if (!hardGate) {
-    const strength = skillEvidenceStrength(next);
-    if (strength === 'strong') {
-      fit = floorFitAt(fit, FIT_FLOOR_STRONG, 'Fit raised: skills substantially match with no hard gates.');
-      apply = raiseApply(apply, 'yes', 'Apply raised: no hard gates and strong skill evidence.');
-    } else if (strength === 'good') {
-      fit = floorFitAt(fit, FIT_FLOOR_GOOD, 'Fit raised: solid skill matches with no hard gates.');
-      apply = raiseApply(apply, 'maybe', 'Apply raised from no: no hard gates.');
-    } else if (
-      (next.geo?.verdict === 'eligible' || next.geo?.verdict === 'unclear') &&
-      (fit.score === 0 || apply.verdict === 'no')
-    ) {
-      fit = floorFitAt(fit, FIT_FLOOR_UNLIKELY, 'Fit raised from Poor: no hard gates triggered.');
-      apply = raiseApply(apply, 'maybe', 'Apply raised from no: no hard gates.');
-    }
-  }
+  let { fit, apply } = applyHardGateCaps(next.fit, next.apply, hasDb, geoExcluded);
+  ({ fit, apply } = applyScamCaps(fit, apply, scam));
+  ({ fit, apply } = applySoftEvidenceLifts(next, fit, apply, hardGate));
 
   if (fit.label !== FIT_LABEL_BY_SCORE[fit.score]) {
     fit = { ...fit, label: FIT_LABEL_BY_SCORE[fit.score] };

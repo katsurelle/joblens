@@ -1,12 +1,12 @@
 import type { ThemePreference } from '../types/domain';
 
 /** Apply Forced / Default theme to document.documentElement. */
-export function applyTheme(theme: ThemePreference | string | undefined | null): void {
+export function applyTheme(theme: ThemePreference | undefined | null): void {
   const root = document.documentElement;
   if (theme === 'light' || theme === 'dark') {
-    root.setAttribute('data-theme', theme);
+    root.dataset.theme = theme;
   } else {
-    root.removeAttribute('data-theme');
+    delete root.dataset.theme;
   }
 }
 

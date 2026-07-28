@@ -82,6 +82,30 @@ Engagement: flexible, minimum 10 hrs/week. Contractor.
 Job description: Software Engineering evaluator creating datasets for LLMs in Python, JavaScript, C/C++, Java, Rust, and Go.
 `.padEnd(700, ' ');
 
+/** Toronto onsite — Canadian postal / city resolution. */
+export const TORONTO_ONSITE = `
+Senior Engineer — MapleCo
+Toronto, ON · On-site
+Location: Toronto office, M5H 2N2
+Job description: build products in downtown Toronto. Must work from the Toronto office.
+`.padEnd(500, ' ');
+
+/** London hybrid — UK postcode / city. */
+export const LONDON_HYBRID = `
+Platform Engineer — Thames Tech
+London, UK · Hybrid
+Location: London office near EC2A 4
+Hybrid: 2 days in office. Job description: cloud platform work.
+`.padEnd(500, ' ');
+
+/** Remote-UK country scope. */
+export const REMOTE_UK = `
+Backend Engineer — UK Remote Co
+Role Location: Remote-UK
+Must be based in the United Kingdom. Fully remote.
+Job description: TypeScript services.
+`.padEnd(500, ' ');
+
 /** Clearance required — for skip-policy hard_skip tests. */
 export const CLEARANCE_REQUIRED_JD = `
 Senior Engineer — DefenseCo

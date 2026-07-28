@@ -16,6 +16,8 @@ import {
   LIVEFLOW_NYC_ONSITE,
   BOISE_REMOTE_EXCLUDE,
   SEATTLE_ONSITE_NOISE_ZIP,
+  TORONTO_ONSITE,
+  LONDON_HYBRID,
 } from '../../tests/fixtures/postings';
 import { makeAnalysis } from '../../tests/helpers/analysis';
 
@@ -156,5 +158,46 @@ About the Job: design in Figma. Remotely, but will ask to come into the San Anto
     const loc = resolvePostingLocation({ pageText });
     expect(loc?.label).toMatch(/Lubbock,\s*TX/i);
     expect(loc?.label).not.toBe('Texas');
+  });
+
+  it('resolves Toronto onsite via CA postal pack', () => {
+    const geo = computeDeterministicGeo({
+      locations: [
+        {
+          zip: 'M5V 3L9',
+          postalCode: 'M5V 3L9',
+          country: 'CA',
+          radiusMiles: 25,
+          radiusUnit: 'km',
+        },
+      ],
+      pageText: TORONTO_ONSITE,
+      homeCountry: 'CA',
+      countryHint: 'CA',
+    });
+    expect(geo?.verdict).toBe('eligible');
+    expect(geo?.method).toBe('zip-haversine');
+  });
+
+  it('resolves London via GB city pack without US ZIP collision', () => {
+    const loc = resolvePostingLocation({
+      pageText: LONDON_HYBRID,
+      homeCountry: 'GB',
+      countryHint: 'GB',
+    });
+    expect(loc?.kind).toBe('city');
+    expect(loc?.label).toMatch(/London/i);
+  });
+
+  it('does not treat UK posting numeric noise as US ZIP when home is GB', () => {
+    const loc = resolvePostingLocation({
+      pageText: 'London office. Reference 78758 appears in footer only.',
+      homeCountry: 'GB',
+      countryHint: 'GB',
+    });
+    // Should resolve London city or null — not Austin ZIP 78758
+    if (loc?.kind === 'zip') {
+      expect(loc.zip).not.toBe('78758');
+    }
   });
 });

@@ -5,7 +5,7 @@ import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import {
   DEFAULT_CULTURE_ID,
-  getCultureById,
+  requireCulture,
   resolveEffectiveCulture,
   type CultureDefinition,
 } from './cultures';
@@ -101,7 +101,7 @@ export function ensureI18n(): typeof i18n {
 }
 
 export function applyDocumentDirection(cultureId: string, root: HTMLElement = document.documentElement): void {
-  const culture = getCultureById(cultureId) || getCultureById(DEFAULT_CULTURE_ID)!;
+  const culture = requireCulture(cultureId);
   root.setAttribute('lang', cultureId);
   root.setAttribute('dir', culture.dir);
 }
@@ -109,7 +109,7 @@ export function applyDocumentDirection(cultureId: string, root: HTMLElement = do
 export async function applyUiCulture(uiCulturePref: string | undefined | null): Promise<CultureDefinition> {
   const i18next = ensureI18n();
   const effective = resolveEffectiveCulture(uiCulturePref);
-  const culture = getCultureById(effective) || getCultureById(DEFAULT_CULTURE_ID)!;
+  const culture = requireCulture(effective);
   await i18next.changeLanguage(culture.id);
   applyDocumentDirection(culture.id);
   return culture;

@@ -1,8 +1,15 @@
-import type { Analysis, DeterministicGeo, Location, ZipCentroids } from '../types/domain';
-import zipCentroidsJson from '../data/zipCentroids.json';
+import type { Analysis, DeterministicGeo, Location } from '../types/domain';
 import { ONSITE_COMMUTE_DEALBREAKER } from './ratings';
-
-const zipCentroids = zipCentroidsJson as unknown as ZipCentroids;
+import { normalizeHomeCountry } from './homeCountry';
+import {
+  directoriesForResolve,
+  getPostalDirectory,
+  locationCountry,
+  locationPostalCode,
+  locationRadiusMiles,
+  milesToDisplay,
+  type PostalDirectory,
+} from './postalDirectory';
 
 const EARTH_MI = 3958.8;
 
@@ -22,7 +29,8 @@ const CITY_COORDS: ReadonlyArray<{ pattern: RegExp; label: string; coord: readon
   { pattern: /\bphiladelphia\b|\bphilly\b/i, label: 'Philadelphia, PA', coord: [39.9526, -75.1652] },
   { pattern: /\batlanta\b/i, label: 'Atlanta, GA', coord: [33.749, -84.388] },
   { pattern: /\bmiami\b/i, label: 'Miami, FL', coord: [25.7617, -80.1918] },
-  { pattern: /\bwashington(?:\s*,?\s*d\.?c\.?)?\b|\bdc\b(?!\w)/i, label: 'Washington, DC', coord: [38.9072, -77.0369] },
+  { pattern: /\bwashington(?:\s+d\.?c\.?|\s*,\s*d\.?c\.?)\b/i, label: 'Washington, DC', coord: [38.9072, -77.0369] },
+  { pattern: /\bdc\b/i, label: 'Washington, DC', coord: [38.9072, -77.0369] },
 ];
 
 const LOCATION_CONTEXT_RE =
@@ -50,6 +58,20 @@ const STATE_COORDS: ReadonlyArray<{ code: string; label: string; coord: readonly
 const NEGATION_POLARITY_RE =
   /\b(?:not|cannot|can\s+not|never|no|excluding|except(?:ing)?|won't|will\s+not)\b/i;
 
+const NEGATION_WINDOW_PATTERNS: readonly RegExp[] = [
+  /\bnot\s+accepting\b/i,
+  /\bcannot\s+be\s+considered\b/i,
+  /\bcan\s+not\s+be\s+considered\b/i,
+  /\bare\s+not\s+accepting\b/i,
+  /\bwe\s+are\s+not\b/i,
+  /\bexcluding\b/i,
+  /\bexcept(?:ing)?\b/i,
+  /\boutside\s+of\b/i,
+  /\bother\s+than\b/i,
+  /\bdo\s+not\s+(?:hire|accept|consider)\b/i,
+  /\bwill\s+not\s+(?:hire|accept|consider)\b/i,
+];
+
 /**
  * True when a match at `index` sits in a residency exclusion / negation window
  * (cities named only inside "not accepting … STATE" are not the job site).
@@ -58,21 +80,7 @@ export function isNegatedLocationMention(text: string, index: number): boolean {
   if (index < 0) return false;
   const start = Math.max(0, index - 160);
   const window = text.slice(start, index);
-  if (
-    /\bnot\s+accepting\b/i.test(window) ||
-    /\bcannot\s+be\s+considered\b/i.test(window) ||
-    /\bcan\s+not\s+be\s+considered\b/i.test(window) ||
-    /\bare\s+not\s+accepting\b/i.test(window) ||
-    /\bwe\s+are\s+not\b/i.test(window) ||
-    /\bexcluding\b/i.test(window) ||
-    /\bexcept(?:ing)?\b/i.test(window) ||
-    /\boutside\s+of\b/i.test(window) ||
-    /\bother\s+than\b/i.test(window) ||
-    /\bdo\s+not\s+(?:hire|accept|consider)\b/i.test(window) ||
-    /\bwill\s+not\s+(?:hire|accept|consider)\b/i.test(window)
-  ) {
-    return true;
-  }
+  if (NEGATION_WINDOW_PATTERNS.some((re) => re.test(window))) return true;
   // "applications from …" alone is too broad; require negation polarity in-window.
   return /\bapplications?\s+from\b/i.test(window) && NEGATION_POLARITY_RE.test(window);
 }
@@ -84,15 +92,15 @@ export function pickLocationEvidenceLine(stated: string, postingLabel: string): 
     .map((l) => l.trim())
     .filter(Boolean);
   const tokens = postingLabel
-    .replace(/,/g, ' ')
+    .replaceAll(',', ' ')
     .split(/\s+/)
     .map((t) => t.trim())
     .filter((t) => t.length >= 2 && !/^ZIP$/i.test(t) && !/^\d+$/.test(t));
   for (const line of lines) {
     if (
       tokens.some((tok) => {
-        const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        return new RegExp(`\\b${escaped}\\b`, 'i').test(line);
+        const escaped = tok.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+        return new RegExp(String.raw`\b${escaped}\b`, 'i').test(line);
       })
     ) {
       return line.slice(0, 160);
@@ -103,8 +111,9 @@ export function pickLocationEvidenceLine(stated: string, postingLabel: string): 
   return stated.slice(0, 160);
 }
 
+/** Normalize US ZIP5 digits for operator hub matching. Prefer PostalDirectory.normalizeCode. */
 export function padZip(zip: string | number | null | undefined): string {
-  const digits = String(zip ?? '').replace(/\D/g, '');
+  const digits = String(zip ?? '').replaceAll(/\D/g, '');
   if (digits.length < 5) return digits.padStart(5, '0');
   return digits.slice(0, 5);
 }
@@ -124,39 +133,58 @@ export function haversineMiles(
   return 2 * EARTH_MI * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
-/** All valid US ZIPs in text (order of appearance). */
-export function extractAllZipsFromText(text: string | null | undefined): string[] {
-  if (!text) return [];
-  const re = /\b(\d{5})(?:-\d{4})?\b/g;
+function extractCodesFromDirs(text: string, dirs: readonly PostalDirectory[]): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text))) {
-    const z = m[1];
-    if (z && zipCentroids[z] && !seen.has(z)) {
-      seen.add(z);
-      out.push(z);
+  for (const dir of dirs) {
+    for (const code of dir.extractFromText(text)) {
+      const key = `${dir.country}:${code}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push(code);
+      }
     }
   }
   return out;
 }
 
-/** First valid ZIP (legacy helper). Prefer resolvePostingLocation for geo. */
-export function extractZipFromText(text: string | null | undefined): string | null {
-  return extractAllZipsFromText(text)[0] ?? null;
+function dirsOrUsDefault(dirs?: readonly PostalDirectory[]): PostalDirectory[] {
+  if (dirs?.length) return [...dirs];
+  const us = getPostalDirectory('US');
+  return us ? [us] : [];
 }
 
-function extractZipsInLocationContext(text: string): string[] {
+function cityToken(label: string): string {
+  return (label.split(',')[0] ?? label).toLowerCase();
+}
+
+/** All valid postal codes in text for the given directories (US = ZIP5). */
+export function extractAllZipsFromText(
+  text: string | null | undefined,
+  dirs?: readonly PostalDirectory[]
+): string[] {
+  if (!text) return [];
+  return extractCodesFromDirs(text, dirsOrUsDefault(dirs));
+}
+
+/** First valid postal code (legacy helper). Prefer resolvePostingLocation for geo. */
+export function extractZipFromText(
+  text: string | null | undefined,
+  dirs?: readonly PostalDirectory[]
+): string | null {
+  return extractAllZipsFromText(text, dirs)[0] ?? null;
+}
+
+function extractZipsInLocationContext(text: string, dirs: readonly PostalDirectory[]): string[] {
   const snippets: string[] = [];
   for (const m of text.matchAll(LOCATION_CONTEXT_RE)) {
     if (m[0]) snippets.push(m[0]);
   }
-  // Also take early header-ish lines (Ashby/Built In often put city in the first screenful)
   snippets.push(text.slice(0, 800));
   const found: string[] = [];
   const seen = new Set<string>();
   for (const snip of snippets) {
-    for (const z of extractAllZipsFromText(snip)) {
+    for (const z of extractAllZipsFromText(snip, dirs)) {
       if (!seen.has(z)) {
         seen.add(z);
         found.push(z);
@@ -168,15 +196,24 @@ function extractZipsInLocationContext(text: string): string[] {
 
 type CityHit = { label: string; coord: readonly [number, number]; index: number };
 
-/**
- * Earliest non-negated city mention wins (not first entry in CITY_COORDS).
- * Skips cities that only appear inside exclusion / negation windows.
- */
-export function extractCityCoord(text: string): { label: string; coord: readonly [number, number] } | null {
+function pickEarliestCity(
+  candidates: readonly CityHit[]
+): { label: string; coord: readonly [number, number] } | null {
+  let best: CityHit | null = null;
+  for (const hit of candidates) {
+    if (!best || hit.index < best.index) best = hit;
+  }
+  return best ? { label: best.label, coord: best.coord } : null;
+}
+
+function extractUsCityCoord(text: string): CityHit | null {
   if (!text) return null;
   let best: CityHit | null = null;
   for (const city of CITY_COORDS) {
-    const re = new RegExp(city.pattern.source, city.pattern.flags.includes('g') ? city.pattern.flags : `${city.pattern.flags}g`);
+    const re = new RegExp(
+      city.pattern.source,
+      city.pattern.flags.includes('g') ? city.pattern.flags : `${city.pattern.flags}g`
+    );
     let m: RegExpExecArray | null;
     while ((m = re.exec(text))) {
       const index = m.index;
@@ -184,23 +221,57 @@ export function extractCityCoord(text: string): { label: string; coord: readonly
       if (!best || index < best.index) {
         best = { label: city.label, coord: city.coord, index };
       }
-      break; // earliest hit for this city pattern is enough
+      break;
     }
   }
-  return best ? { label: best.label, coord: best.coord } : null;
+  return best;
+}
+
+function extractPackCityHits(text: string, dirs: readonly PostalDirectory[]): CityHit[] {
+  const out: CityHit[] = [];
+  for (const dir of dirs) {
+    for (const hit of dir.extractCities(text)) {
+      if (isNegatedLocationMention(text, hit.index)) continue;
+      out.push({ label: hit.label, coord: hit.coord, index: hit.index });
+    }
+  }
+  return out;
 }
 
 /**
- * Prefer "City, ST" / "City, ST · Remote" header signals.
- * Label always keeps the city name; coords prefer a known city centroid, else state.
+ * Earliest non-negated city mention wins.
+ * Uses pack cities for non-US dirs; US city table when a US directory is active.
+ */
+export function extractCityCoord(
+  text: string,
+  dirs?: readonly PostalDirectory[]
+): { label: string; coord: readonly [number, number] } | null {
+  if (!text) return null;
+  const use = dirsOrUsDefault(dirs);
+  const allowUs = use.some((d) => d.country === 'US');
+  const pack = pickEarliestCity(extractPackCityHits(text, use));
+  const usHit = allowUs ? extractUsCityCoord(text) : null;
+  const us = usHit ? { label: usHit.label, coord: usHit.coord } : null;
+  if (pack && us) {
+    const packIdx = text.toLowerCase().indexOf(cityToken(pack.label));
+    const usIdx = text.toLowerCase().indexOf(cityToken(us.label));
+    if (packIdx >= 0 && (usIdx < 0 || packIdx <= usIdx)) return pack;
+    return us;
+  }
+  return pack || us;
+}
+
+/**
+ * Prefer "City, ST" / "City, ST · Remote" header signals (US-shaped).
+ * Only used when a US postal directory is in play.
  */
 export function extractStateFromLocationHeader(
   text: string
 ): { label: string; coord: readonly [number, number] } | null {
   if (!text) return null;
   const header = text.slice(0, 1500);
-  const re =
-    /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?),\s*([A-Z]{2})\b(?:\s*[·•|,/-]\s*|\s+)(?:Remote|Hybrid|On[\s-]?site)?/g;
+  // Keep city/state capture simple (Sonar regex complexity); work-model suffix optional separately.
+  const re = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?),\s*([A-Z]{2})\b/g;
   let m: RegExpExecArray | null;
   let best: { city: string; code: string; index: number } | null = null;
   while ((m = re.exec(header))) {
@@ -210,96 +281,125 @@ export function extractStateFromLocationHeader(
     if (!city || !code || isNegatedLocationMention(header, index)) continue;
     if (!best || index < best.index) best = { city, code, index };
   }
-  if (!best) {
-    const loose = header.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?),\s*([A-Z]{2})\b/);
-    if (
-      loose?.[1] &&
-      loose[2] &&
-      !isNegatedLocationMention(header, loose.index ?? 0)
-    ) {
-      best = {
-        city: loose[1].trim(),
-        code: loose[2].toUpperCase(),
-        index: loose.index ?? 0,
-      };
-    }
-  }
   if (!best) return null;
 
-  const cityHit = extractCityCoord(`${best.city}, ${best.code}`);
-  if (cityHit) return cityHit;
+  const { city, code } = best;
+  const cityHit = extractUsCityCoord(`${city}, ${code}`);
+  if (cityHit) return { label: cityHit.label, coord: cityHit.coord };
 
-  const state = STATE_COORDS.find((s) => s.code === best!.code);
+  const state = STATE_COORDS.find((s) => s.code === code);
   if (!state) return null;
-  // Keep city in the label even when falling back to the state centroid for distance.
-  return { label: `${best.city}, ${best.code}`, coord: state.coord };
+  return { label: `${city}, ${code}`, coord: state.coord };
 }
 
 export type ResolvePostingLocationArgs = {
   pageText?: string;
   statedLocation?: string;
   operatorZips?: readonly string[];
+  homeCountry?: string | null;
+  countryHint?: string | null;
 };
 
 export type ResolvedPostingLocation =
   | { kind: 'zip'; zip: string; coord: readonly [number, number]; label: string }
   | { kind: 'city'; coord: readonly [number, number]; label: string };
 
+function lookupCode(
+  code: string,
+  dirs: readonly PostalDirectory[]
+): { code: string; coord: readonly [number, number]; label: string } | null {
+  for (const dir of dirs) {
+    const hit = dir.lookup(code);
+    if (hit) return { code: hit.code, coord: hit.coord, label: hit.label };
+  }
+  return null;
+}
+
+function resolveFromStatedCodes(
+  stated: string,
+  dirs: readonly PostalDirectory[]
+): ResolvedPostingLocation | null {
+  for (const z of extractAllZipsFromText(stated, dirs)) {
+    const hit = lookupCode(z, dirs);
+    if (hit) return { kind: 'zip', zip: hit.code, coord: hit.coord, label: hit.label };
+  }
+  return null;
+}
+
+function resolveFromUsHeader(
+  corpus: string,
+  pageText: string,
+  dirs: readonly PostalDirectory[]
+): ResolvedPostingLocation | null {
+  const stateFromHeader = extractStateFromLocationHeader(corpus);
+  if (!stateFromHeader) return null;
+  const cityEarly = extractCityCoord(pageText.slice(0, 1200), dirs);
+  if (cityEarly) return { kind: 'city', ...cityEarly };
+  return { kind: 'city', ...stateFromHeader };
+}
+
+function resolveFromContextCodes(
+  corpus: string,
+  dirs: readonly PostalDirectory[],
+  operator: ReadonlySet<string>
+): ResolvedPostingLocation | null {
+  const pick = extractZipsInLocationContext(corpus, dirs).find((z) => !operator.has(z));
+  if (!pick) return null;
+  const hit = lookupCode(pick, dirs);
+  if (!hit) return null;
+  return { kind: 'zip', zip: hit.code, coord: hit.coord, label: hit.label };
+}
+
 /**
  * Resolve where the job is from masthead / header signals first.
- * Never treat a bare page ZIP that only matches an operator ZIP as the job site.
+ * Never treat a bare page postal code that only matches an operator hub as the job site.
+ * When countryHint/homeCountry is non-US, US ZIP5 extraction is not used (no false US hits).
  */
 export function resolvePostingLocation({
   pageText = '',
   statedLocation = '',
   operatorZips = [],
+  homeCountry = 'US',
+  countryHint = null,
 }: ResolvePostingLocationArgs): ResolvedPostingLocation | null {
-  const operator = new Set(operatorZips.map(padZip));
+  const dirs = directoriesForResolve({ homeCountry, countryHint });
+  if (!dirs.length) return null;
+
+  const allowUs = dirs.some((d) => d.country === 'US');
+  const operator = new Set(
+    operatorZips.map((z) => {
+      for (const dir of dirs) {
+        const n = dir.normalizeCode(z) || dir.lookup(z)?.code;
+        if (n) return n;
+      }
+      return padZip(z);
+    })
+  );
   const stated = statedLocation.trim();
   const corpus = `${stated}\n${pageText}`;
 
-  // 1) ZIP in stated location string (masthead / decluttered header)
-  for (const z of extractAllZipsFromText(stated)) {
-    const coord = zipCentroids[z];
-    if (coord) return { kind: 'zip', zip: z, coord, label: `ZIP ${z}` };
-  }
+  const fromStatedCode = resolveFromStatedCodes(stated, dirs);
+  if (fromStatedCode) return fromStatedCode;
 
-  // 2) Named city in stated location or early page text / location context
-  //    (skips cities that only appear in exclusion / negation windows)
-  const cityFromStated = extractCityCoord(stated);
-  if (cityFromStated) {
-    return { kind: 'city', ...cityFromStated };
-  }
+  const cityFromStated = extractCityCoord(stated, dirs);
+  if (cityFromStated) return { kind: 'city', ...cityFromStated };
 
-  // Prefer City, ST header ("City, ST · Remote") before exclusion-tainted cities.
-  const stateFromHeader = extractStateFromLocationHeader(corpus);
-  if (stateFromHeader) {
-    // If a known city appears *before* the state header hit and is not negated, prefer it.
-    const early = pageText.slice(0, 1200);
-    const cityEarly = extractCityCoord(early);
-    if (cityEarly) return { kind: 'city', ...cityEarly };
-    return { kind: 'city', ...stateFromHeader };
+  if (allowUs) {
+    const fromHeader = resolveFromUsHeader(corpus, pageText, dirs);
+    if (fromHeader) return fromHeader;
   }
 
   const locationSnippets = [...corpus.matchAll(LOCATION_CONTEXT_RE)].map((m) => m[0] || '');
   locationSnippets.unshift(pageText.slice(0, 1200));
   for (const snip of locationSnippets) {
-    const city = extractCityCoord(snip);
+    const city = extractCityCoord(snip, dirs);
     if (city) return { kind: 'city', ...city };
   }
 
-  // 3) ZIP in location-context snippets — skip ZIPs that are only the operator's
-  //    unless no city was found and it's the only signal (still prefer non-operator)
-  const contextZips = extractZipsInLocationContext(corpus);
-  const nonOperator = contextZips.filter((z) => !operator.has(z));
-  const pick = nonOperator[0] ?? null;
-  if (pick) {
-    const coord = zipCentroids[pick];
-    if (coord) return { kind: 'zip', zip: pick, coord, label: `ZIP ${pick}` };
-  }
+  const fromContext = resolveFromContextCodes(corpus, dirs, operator);
+  if (fromContext) return fromContext;
 
-  // 4) City anywhere in first 4k of page (last resort; still skip negated mentions)
-  const cityAnywhere = extractCityCoord(pageText.slice(0, 4000));
+  const cityAnywhere = extractCityCoord(pageText.slice(0, 4000), dirs);
   if (cityAnywhere) return { kind: 'city', ...cityAnywhere };
 
   return null;
@@ -309,31 +409,53 @@ export type ComputeGeoArgs = {
   locations: readonly Location[];
   pageText?: string;
   statedLocation?: string;
+  homeCountry?: string | null;
+  countryHint?: string | null;
 };
 
 function verdictAgainstLocations(
   postingCoord: readonly [number, number],
   postingLabel: string,
   locations: readonly Location[],
-  postingZip: string | null
+  postingZip: string | null,
+  homeCountry: string
 ): DeterministicGeo | null {
-  let best: { miles: number; zip: string; radiusMiles: number } | null = null;
+  let best: {
+    miles: number;
+    zip: string;
+    radiusMiles: number;
+    displayUnit: 'mi' | 'km';
+  } | null = null;
+
   for (const loc of locations) {
-    const z = padZip(loc.zip);
-    const coord = zipCentroids[z];
-    if (!coord) continue;
-    const miles = haversineMiles(postingCoord, coord);
-    const radius = Number(loc.radiusMiles) || 0;
+    const code = locationPostalCode(loc);
+    if (!code) continue;
+    const country = locationCountry(loc, homeCountry);
+    const dir = getPostalDirectory(country);
+    if (!dir) continue;
+    const normalized = dir.normalizeCode(code);
+    const hit = dir.lookup(code) ?? (normalized ? dir.lookup(normalized) : null);
+    if (!hit) continue;
+    const miles = haversineMiles(postingCoord, hit.coord);
+    const radiusMiles = locationRadiusMiles(loc);
     if (!best || miles < best.miles) {
-      best = { miles, zip: z, radiusMiles: radius };
+      best = {
+        miles,
+        zip: hit.code,
+        radiusMiles,
+        displayUnit: loc.radiusUnit || 'mi',
+      };
     }
   }
   if (!best) return null;
 
   const eligible = best.miles <= best.radiusMiles;
+  const shown = milesToDisplay(best.miles, best.displayUnit);
+  const radiusShown = milesToDisplay(best.radiusMiles, best.displayUnit);
+  const unitLabel = best.displayUnit;
   return {
     verdict: eligible ? 'eligible' : 'excluded',
-    reason: `Deterministic: ${postingLabel} is ${best.miles.toFixed(1)} mi from ${best.zip} (radius ${best.radiusMiles} mi).`,
+    reason: `Deterministic: ${postingLabel} is ${shown.toFixed(1)} ${unitLabel} from ${best.zip} (radius ${radiusShown.toFixed(0)} ${unitLabel}).`,
     method: 'zip-haversine',
     postingZip: postingZip,
     nearestOperatorZip: best.zip,
@@ -342,36 +464,53 @@ function verdictAgainstLocations(
 }
 
 /**
- * If we can resolve a posting location and at least one operator ZIP, return a
+ * If we can resolve a posting location and at least one operator postal hub, return a
  * deterministic onsite/hybrid geo object. Otherwise null.
+ * When the posting country has no postal pack, returns null (model/`unclear`) rather than
+ * false-matching a US ZIP.
  */
 export function computeDeterministicGeo({
   locations,
   pageText = '',
   statedLocation = '',
+  homeCountry = 'US',
+  countryHint = null,
 }: ComputeGeoArgs): DeterministicGeo | null {
+  const home = normalizeHomeCountry(homeCountry);
+  const hint = countryHint ? normalizeHomeCountry(countryHint) : null;
+
+  // If an explicit non-US posting hint has no pack, do not fall back to US ZIP matching.
+  if (hint && hint !== 'US' && !getPostalDirectory(hint) && hint !== home) {
+    return null;
+  }
+
   const resolved = resolvePostingLocation({
     pageText,
     statedLocation,
-    operatorZips: locations.map((l) => l.zip),
+    operatorZips: locations.map(locationPostalCode),
+    homeCountry: home,
+    countryHint: hint,
   });
   if (!resolved) return null;
 
   if (resolved.kind === 'zip') {
     return verdictAgainstLocations(
       resolved.coord,
-      `ZIP ${resolved.zip}`,
+      resolved.label,
       locations,
-      resolved.zip
+      resolved.zip,
+      home
     );
   }
 
-  return verdictAgainstLocations(resolved.coord, resolved.label, locations, null);
+  return verdictAgainstLocations(resolved.coord, resolved.label, locations, null, home);
 }
 
 export type ApplyGeoContext = {
   locations: readonly Location[];
   pageText: string;
+  homeCountry?: string | null;
+  countryHint?: string | null;
 };
 
 export const NO_LOCATIONS_GEO_REASON = 'No commute locations configured';
@@ -383,12 +522,12 @@ export const NO_LOCATIONS_GEO_REASON = 'No commute locations configured';
  */
 export function applyDeterministicGeo(
   analysis: Analysis,
-  { locations, pageText }: ApplyGeoContext
+  { locations, pageText, homeCountry = 'US', countryHint = null }: ApplyGeoContext
 ): Analysis {
   const model = analysis.workModel ?? analysis.masthead.workModel;
   if (model === 'remote') return analysis;
 
-  const hasLocations = locations.some((l) => l.zip.trim());
+  const hasLocations = locations.some((l) => locationPostalCode(l));
   if (!hasLocations && (model === 'onsite' || model === 'hybrid')) {
     return {
       ...analysis,
@@ -410,42 +549,44 @@ export function applyDeterministicGeo(
     .filter(Boolean)
     .join('\n');
 
-  const computed = computeDeterministicGeo({ locations, pageText, statedLocation: stated });
+  const computed = computeDeterministicGeo({
+    locations,
+    pageText,
+    statedLocation: stated,
+    homeCountry,
+    countryHint,
+  });
   if (!computed) return analysis;
-
-  if (model === 'onsite' || model === 'hybrid' || model === 'unclear' || !model) {
-    let dealbreakers = analysis.dealbreakers;
-    if (computed.verdict === 'excluded' && model === 'onsite') {
-      const already = dealbreakers.some((d) => /onsite|location|commute/i.test(d.requirement));
-      if (!already) {
-        const resolved = resolvePostingLocation({
-          pageText,
-          statedLocation: stated,
-          operatorZips: locations.map((l) => l.zip),
-        });
-        const evidence = pickLocationEvidenceLine(stated, resolved?.label || computed.reason);
-        dealbreakers = [
-          {
-            requirement: ONSITE_COMMUTE_DEALBREAKER,
-            reason: computed.reason,
-            evidence,
-          },
-          ...dealbreakers,
-        ];
-      }
-    }
-
-    return {
-      ...analysis,
-      dealbreakers,
-      geo: {
-        verdict: computed.verdict,
-        reason: computed.reason,
-        method: computed.method,
-        postingZip: computed.postingZip,
-        distanceMiles: computed.distanceMiles,
-      },
-    };
+  if (model !== 'onsite' && model !== 'hybrid' && model !== 'unclear' && model) {
+    return analysis;
   }
-  return analysis;
+
+  let dealbreakers = analysis.dealbreakers;
+  const alreadyHasCommuteDb = dealbreakers.some((d) =>
+    /onsite|location|commute/i.test(d.requirement)
+  );
+  if (computed.verdict === 'excluded' && model === 'onsite' && !alreadyHasCommuteDb) {
+    const evidenceLabel =
+      computed.postingZip != null ? `ZIP ${computed.postingZip}` : computed.reason;
+    dealbreakers = [
+      {
+        requirement: ONSITE_COMMUTE_DEALBREAKER,
+        reason: computed.reason,
+        evidence: pickLocationEvidenceLine(stated, evidenceLabel),
+      },
+      ...dealbreakers,
+    ];
+  }
+
+  return {
+    ...analysis,
+    dealbreakers,
+    geo: {
+      verdict: computed.verdict,
+      reason: computed.reason,
+      method: computed.method,
+      postingZip: computed.postingZip,
+      distanceMiles: computed.distanceMiles,
+    },
+  };
 }

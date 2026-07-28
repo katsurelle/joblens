@@ -11,7 +11,7 @@ AI-assisted job-posting triage as a personal Chrome extension (Manifest V3). You
 - **Dealbreakers** — unmet hard requirements, titles phrased as failures.
 - **Skip triggers** — free-text list plus optional category gates (PERM, shell employers, role-type toggles).
 - **Triage preferences** — hard gates (employer block list, clearance), skill honesty (held / ramp / never-claim), role families, remote preference, employment priority, soft Fit signals.
-- **Geo** — onsite/hybrid uses deterministic US ZIP haversine when a ZIP/city can be resolved; remote uses work-eligible regions.
+- **Geo** — onsite/hybrid uses deterministic postal haversine (full US ZIP centroids; curated CA/UK/IE/AU packs) when a code/city can be resolved; remote uses work-eligible regions/countries. Set **Home / search country** in Options Geography.
 - **Decluttered JD**, **bookmark**, **copy markdown / JSON** (`joblens.triage/v1`).
 - **Appearance** — Default (Chrome/system), Light, or Dark.
 
@@ -59,15 +59,15 @@ Signing uses a local key at `keys/joblens.pem` (created on first pack, **not** i
 
 1. Toolbar → JobLens side panel → **Options** (or open the options page).
 2. Paste your Anthropic API key (stored in `chrome.storage.local`, sent only to Anthropic).
-3. **Geography is required for Scan** — set at least one of: a commute ZIP, remote-eligible regions, or **Remote only** (skips onsite/hybrid). Skills are strongly recommended but optional.
+3. **Geography is required for Scan** — set **Home / search country**, then at least one of: a commute postal/ZIP code, remote-eligible regions/countries, or **Remote only** (skips onsite/hybrid). Skills are strongly recommended but optional.
 4. Options uses four tabs (**Basics**, **Geography**, **Skills & history**, **Preferences**). Lower-value fields sit under **Advanced** disclosures.
 5. Optionally **Import documents** (`.txt`, `.md`, `.pdf`, `.docx`) at the top of Options: Claude proposes config changes; review checkboxes and Apply selected into the draft, then **Save**. Legacy `.doc` is not supported — convert or paste text.
 6. Preference groups (empty / off by default except PERM-notice flag):
    - **Basics** — API key, model, theme, education, authorization note, availability
-   - **Geography** — ZIP radii, remote regions, Remote only; advanced: remote preference, relocation-subsidy flag
+   - **Geography** — home country, postal radii (mi/km), remote regions / country chips, Remote only; advanced: remote preference, relocation-subsidy flag
    - **Skills & history** — one skills list (held / ramp / never-claim), gaps, work history + extract into that list
-   - **Preferences** — employment priority, clearance, blocked employers, skips; advanced: pay limits, pipeline fullness note, specialty flags (e.g. ML/AI training-as-the-job)
-7. **Save** before triage. Fresh installs ship no personal employers, ZIPs, salary numbers, or specialty skips enabled.
+   - **Preferences** — employment priority, clearance, blocked employers, skips; advanced: pay limits (currency follows home country; no auto-conversion), pipeline fullness note, specialty flags (e.g. ML/AI training-as-the-job)
+7. **Save** before triage. Fresh installs ship no personal employers, postal hubs, salary numbers, or specialty skips enabled.
 
 Do not commit API keys, `.pem` files, or packed `.crx` builds.
 

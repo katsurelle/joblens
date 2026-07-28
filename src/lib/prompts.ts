@@ -15,6 +15,8 @@ import {
   buildResponseLocaleInstruction,
   responseLocaleFromConfig,
 } from '../i18n/responseLocale';
+import { locationPostalCode } from './postalDirectory';
+import { currencyForCountry, normalizeHomeCountry } from './homeCountry';
 
 export const EXTRACTION_SYSTEM = `You extract a professional skills inventory from a candidate's work history.
 
@@ -106,7 +108,7 @@ Geography:
 - Apply remotePreference as a soft Fit weight (prefer_remote boosts remote-eligible roles; prefer_onsite boosts onsite/hybrid when eligible); never make remotePreference alone force Apply "no". remoteOnly is the hard gate for skipping onsite/hybrid.
 - When requireRelocationSubsidyOutsideMetros is true and the posting requires relocation outside the candidate's metro/ZIP radii without subsidy language, flag as a soft concern in Fit rationale (hard dealbreaker only if wording clearly makes relocation mandatory with no support and prefer_onsite/gates demand it).
 - Name the specific constraint and which candidate location/region it was checked against in "reason".
-- When a GEO_HINT block is provided (deterministic ZIP distance), prefer its verdict/reason for onsite/hybrid when a posting ZIP was resolved. Still set workModel correctly. For remote roles, ignore GEO_HINT and apply residency rules.
+  - When a GEO_HINT block is provided (deterministic postal distance), prefer its verdict/reason for onsite/hybrid when a posting postal code or city was resolved. Still set workModel correctly. For remote roles, ignore GEO_HINT and apply residency rules.
 - PROFILE_EMPTY_HINTS (when present in the user message) reinforce the empty-list rules above; follow them.
 
 Clearance:
@@ -189,8 +191,18 @@ export function buildAnalysisUser({
   const extracted = p.extractedSkills
     .map((s) => `${s.skill} (~${s.years}y, ${s.confidence})`)
     .join('; ');
-  const locs = p.locations.map((l) => `${l.zip} within ${l.radiusMiles} mi`).join('; ');
+  const locs = p.locations
+    .map((l) => {
+      const code = locationPostalCode(l);
+      const unit = l.radiusUnit || 'mi';
+      const country = l.country || p.homeCountry || 'US';
+      return code ? `${code} (${country}) within ${l.radiusMiles} ${unit}` : '';
+    })
+    .filter(Boolean)
+    .join('; ');
   const skipTriggers = effectiveSkipTriggers(p);
+  const homeCountry = normalizeHomeCountry(p.homeCountry);
+  const currency = currencyForCountry(homeCountry);
 
   const employmentLabels = prefs.employmentPriority
     .map((id) => EMPLOYMENT_PRIORITY_OPTIONS.find((o) => o.id === id)?.label || id)
@@ -201,7 +213,7 @@ export function buildAnalysisUser({
   ).map((o) => o.label);
 
   const geoBlock = geoHint
-    ? `\nGEO_HINT (deterministic ZIP distance; prefer for onsite/hybrid):\n${JSON.stringify(geoHint, null, 2)}\n`
+    ? `\nGEO_HINT (deterministic postal distance; prefer for onsite/hybrid):\n${JSON.stringify(geoHint, null, 2)}\n`
     : '';
 
   const preferencesBlock = {
@@ -251,15 +263,15 @@ export function buildAnalysisUser({
       'held skills empty: do not invent skill matches; keep Fit conservative (Possible/Unlikely) unless the posting is skill-light'
     );
   }
+  const emptyHintLines = emptyHints.map((h, i) => `  ${i + 1}. ${h}`).join('\n');
   const emptyHintsBlock =
-    emptyHints.length > 0
-      ? `\nPROFILE_EMPTY_HINTS\n${emptyHints.map((h, i) => `  ${i + 1}. ${h}`).join('\n')}\n`
-      : '';
+    emptyHints.length > 0 ? `\nPROFILE_EMPTY_HINTS\n${emptyHintLines}\n` : '';
 
   const locale = responseLocaleFromConfig(p.uiCulture);
   const localeBlock = `\n${buildResponseLocaleInstruction(locale)}\n`;
 
   return `CANDIDATE PROFILE
+Home / search country: ${homeCountry}
 Education: ${p.education || '(not set)'}
 Work authorization note: ${p.workAuthorizationNote || '(none)'}
 Held skills: ${held.map(formatClaim).join('; ') || p.proficiencies.join(', ') || '(none)'}
@@ -268,6 +280,7 @@ Never-claim skills: ${neverClaim.map(formatClaim).join('; ') || '(none)'}
 ${extracted ? `Legacy extracted skills (treat as held if not already listed): ${extracted}\n` : ''}Known gaps: ${p.deficiencies.join(', ') || '(none listed)'}
 Onsite/hybrid locations: ${locs || '(none)'}
 Remote work-eligible regions: ${p.workEligibleRegions.join(', ') || '(none)'}
+Compensation currency context: ${currency} (floors are not auto-converted)
 Skip triggers to check:
 ${skipTriggers.map((t, i) => `  ${i + 1}. ${t}`).join('\n') || '  (none)'}
 ${emptyHintsBlock}${localeBlock}
@@ -302,7 +315,7 @@ Return a bare JSON object, no prose, no code fences:
 Rules:
 - Only propose paths from this allowlist: education, workAuthorizationNote, locations, workEligibleRegions, skillClaims, deficiencies, skipTriggers, workHistory, preferences.remoteOnly, preferences.remotePreference, preferences.occasionalTravelAllowance, preferences.requireRelocationSubsidyOutsideMetros, preferences.employmentPriority, preferences.minContractMonths, preferences.clearancePolicy, preferences.clearanceIncludePreferred, preferences.clearanceSkipUntil, preferences.blockedEmployers, preferences.roleSkipCategories, preferences.flagShellEmployers, preferences.flagPermNotices, preferences.compensationMode, preferences.compensationMinUsd, preferences.compensationMaxUsd, preferences.flagSuspiciousComp, preferences.preferStructuredWork, preferences.pipelineLoad, preferences.targetStartDate, preferences.availableImmediately, preferences.noticePeriodWeeks.
 - Never propose apiKey, model, theme, bookmarks, roleFamilies, extractedSkills, or preflightMode.
-- Never invent ZIP codes. Only include locations when the text clearly states a postal code or unambiguous home metro with a real US ZIP.
+- Never invent postal codes. Only include locations when the text clearly states a postal/ZIP code for the candidate's homeCountry market (or an unambiguous home metro with a real code in that market).
 - skillClaims: array of { skill, standing: "held"|"ramp"|"never_claim", years?, lastUsed?, scopeNote?, confidence? }. Prefer held only when evidenced; use ramp/never_claim when the seeker says so. This is the single skills list.
 - workHistory entries: { org, title, start, end, description }. Stay conservative.
 - employmentPriority ids (ordered): permanent | contract_to_hire | long_contract | short_contract | part_time.
@@ -351,15 +364,16 @@ Rules:
 - organization: best guess company name if present, else "".
 
 Geography / residency (critical — follow exactly):
-- Commute locations (when configured) apply to onsite/hybrid only. Do not hard_skip a remote role because the employer's listed city/HQ is outside commute ZIPs.
+- Commute locations (when configured) apply to onsite/hybrid only. Do not hard_skip a remote role because the employer's listed city/HQ is outside commute postal radii.
 - candidateRemoteResidency.regions = where the CANDIDATE may live/work FROM for remote roles. Empty regions list = no residency filter (all remote OK).
 - For remote roles: hard_skip for residency ONLY if the posting EXPLICITLY restricts employee residency/work location to a set of regions/states/countries and NONE of those intersect the candidate's list.
 - INVERTED exclusions: "not accepting applicants from STATE_A, STATE_B" / "cannot be considered" means those states are FORBIDDEN — candidates in other configured states are permitted. Do NOT hard_skip when the candidate's regions are outside the excluded list.
 - Never treat a city/state that appears only inside an exclusion sentence as the job's work location (a state named only under "not accepting …" is not the posting site).
-- Remote + "nationwide", "open to all US", "Remote-US" / "Role Location: Remote-US", "no [state] residency required", or no residency restriction → clear for residency (even if HQ/city is listed).
+- Remote + "nationwide", "open to all US", "Remote-US" / "Role Location: Remote-US", "Remote-Canada", "Remote-UK", "no [state] residency required", or no residency restriction → clear for residency when candidate regions fall under that country scope (even if HQ/city is listed).
 - Country-level US only ("must be based in the US", "Remote-US", "U.S.-based developer/engineer/candidate", "looking for a U.S.-based …") INCLUDES every US state. Never hard_skip because the candidate lists TX/PA (or other US states) under a US-wide remote role. US is not a separate region that fails to intersect with states.
 - "U.S.-based [job title / developer / engineer / candidate]" means the WORKER must be in the US. Do NOT treat that as referring only to clients. "U.S.-based clients" alone is not a worker residency restriction.
-- Multi-country OR allow-lists ("US, Canada or WEU", "based out of US or Canada"): if US is in the list, every US state is allowed. Do not hard_skip when candidate regions are US states under such a list.
+- Country-level Canada / UK / Australia / Ireland remote scope similarly includes that country's regions (e.g. ON/BC under Canada; GB/ENG under UK).
+- Multi-country OR allow-lists ("US, Canada or WEU", "based out of US or Canada"): if US is in the list, every US state is allowed; if Canada/UK/EU/WEU is in the list, matching candidate country/province codes are allowed. Do not hard_skip when candidate regions are covered under such a list.
 - Listing a city next to Remote ("City, ST · Remote") is NOT a residency restriction by itself.
 - Short mandatory onsite training / onboarding / orientation (days or weeks) with Remote-primary work → Soft under occasionalTravelAllowance when configured; not a commute hard_skip.
 - clearancePolicy "skip": only hard_skip when the posting clearly requires clearance (e.g. "clearance required", "must have Secret clearance"). Never invent clearance. Bare board UI words or unrelated text are not enough. "flag" → soft when required language is present. "ignore" → no clearance gate.
@@ -397,6 +411,15 @@ export function buildPreflightHardGates(profile: Config): Record<string, unknown
     .filter(([, on]) => on)
     .map(([id]) => id);
   const regions = (profile.workEligibleRegions ?? []).map((r) => r.trim()).filter(Boolean);
+
+  let clearanceRule = 'Ignore clearance language.';
+  if (prefs.clearancePolicy === 'skip') {
+    clearanceRule =
+      'Required clearance language → hard_skip (never soft). Preferred/able-to-obtain only when clearanceIncludePreferred is true.';
+  } else if (prefs.clearancePolicy === 'flag') {
+    clearanceRule = 'Clearance language → soft concern, not hard_skip.';
+  }
+
   return {
     remoteOnly: prefs.remoteOnly,
     occasionalTravelAllowance: prefs.occasionalTravelAllowance,
@@ -418,12 +441,7 @@ export function buildPreflightHardGates(profile: Config): Record<string, unknown
       rule:
         'For remote jobs, hard_skip only when the posting explicitly restricts worker residency such that NONE of the candidate regions are allowed. Inverted exclusion lists PERMIT other states. Nationwide / Remote-US / US-only / U.S.-based [role or candidate] / multi-country OR lists that include US (e.g. US, Canada or WEU) / no residency required → do not hard_skip (US country scope includes all US states). U.S.-based clients alone is not a worker limit. Do not treat cities named only in exclusion sentences as the job site.',
     },
-    clearanceRule:
-      prefs.clearancePolicy === 'skip'
-        ? 'Required clearance language → hard_skip (never soft). Preferred/able-to-obtain only when clearanceIncludePreferred is true.'
-        : prefs.clearancePolicy === 'flag'
-          ? 'Clearance language → soft concern, not hard_skip.'
-          : 'Ignore clearance language.',
+    clearanceRule,
     workAuthorization: {
       note: (profile.workAuthorizationNote || '').trim() || null,
       rule:

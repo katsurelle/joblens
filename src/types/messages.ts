@@ -33,6 +33,8 @@ export type GetPageTextRequest = z.infer<typeof GetPageTextRequestSchema>;
 export const OpenSidePanelRequestSchema = z.object({
   type: z.literal('OPEN_SIDE_PANEL'),
   startScan: z.boolean().optional(),
+  /** Required when the sender is not a tab (e.g. extension popup). */
+  tabId: z.number().int().positive().optional(),
 });
 export type OpenSidePanelRequest = z.infer<typeof OpenSidePanelRequestSchema>;
 
@@ -121,11 +123,12 @@ export function isOkResponse(res: unknown): res is { ok: true; data?: unknown } 
 }
 
 export function parseExtractedSkills(raw: unknown): ExtractedSkill[] {
-  const candidate = Array.isArray(raw)
-    ? raw
-    : raw && typeof raw === 'object' && 'skills' in raw
-      ? (raw as { skills: unknown }).skills
-      : [];
+  let candidate: unknown = [];
+  if (Array.isArray(raw)) {
+    candidate = raw;
+  } else if (raw && typeof raw === 'object' && 'skills' in raw) {
+    candidate = (raw as { skills: unknown }).skills;
+  }
 
   const skills = z.array(ExtractedSkillSchema).safeParse(candidate);
   if (skills.success) return skills.data;
@@ -153,12 +156,12 @@ export function parseAnalysisPayload(raw: unknown): Analysis {
 }
 
 export function parsePreflightPayload(raw: unknown): PreflightResult {
-  const candidate =
-    raw && typeof raw === 'object' && 'verdict' in raw
-      ? raw
-      : raw && typeof raw === 'object' && 'preflight' in raw
-        ? (raw as { preflight: unknown }).preflight
-        : raw;
+  let candidate: unknown = raw;
+  if (raw && typeof raw === 'object' && 'verdict' in raw) {
+    candidate = raw;
+  } else if (raw && typeof raw === 'object' && 'preflight' in raw) {
+    candidate = (raw as { preflight: unknown }).preflight;
+  }
 
   const loose = z
     .object({

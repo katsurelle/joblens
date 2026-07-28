@@ -1,8 +1,7 @@
 import {
   cultureLanguagePromptName,
-  getCultureById,
+  requireCulture,
   resolveEffectiveCulture,
-  DEFAULT_CULTURE_ID,
 } from './cultures';
 
 export type ResponseLocaleContext = {
@@ -13,7 +12,7 @@ export type ResponseLocaleContext = {
 
 export function responseLocaleFromConfig(uiCulture: string | undefined | null): ResponseLocaleContext {
   const cultureId = resolveEffectiveCulture(uiCulture);
-  const culture = getCultureById(cultureId) || getCultureById(DEFAULT_CULTURE_ID)!;
+  const culture = requireCulture(cultureId);
   return {
     cultureId: culture.id,
     languageName: cultureLanguagePromptName(culture.id),

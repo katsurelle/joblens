@@ -46,6 +46,18 @@ function applyBadgeClass(verdict: ApplyVerdict): string {
   return 'b-apply-maybe';
 }
 
+function geoBadgeClass(verdict: string | undefined): string {
+  if (verdict === 'eligible') return 'b-ok';
+  if (verdict === 'excluded') return 'b-no';
+  return 'b-mid';
+}
+
+function skillStatusMark(status: string): string {
+  if (status === 'match') return '✓ ';
+  if (status === 'partial') return '~ ';
+  return '✗ ';
+}
+
 const FIT_KEYS: Record<FitLabel, string> = {
   'Perfect fit': 'triage.fitPerfect',
   'Excellent fit': 'triage.fitExcellent',
@@ -54,6 +66,196 @@ const FIT_KEYS: Record<FitLabel, string> = {
   'Unlikely fit': 'triage.fitUnlikely',
   'Poor fit': 'triage.fitPoor',
 };
+
+function ProfileWarningBanner({
+  message,
+  required,
+  onOpenOptions,
+}: Readonly<{
+  message: string;
+  required: boolean;
+  onOpenOptions?: () => void;
+}>): JSX.Element | null {
+  const { t } = useTranslation();
+  if (!message) return null;
+  return (
+    <output
+      className={`profile-warn${required ? ' profile-warn-required' : ''}`}
+    >
+      <p>{message}</p>
+      {onOpenOptions ? (
+        <button type="button" className="linkish" onClick={onOpenOptions}>
+          {t('common.openOptions')}
+        </button>
+      ) : null}
+    </output>
+  );
+}
+
+function TriageResultBody({
+  analysis,
+  saved,
+  copied,
+  copiedJson,
+  onScan,
+  onBookmark,
+  onCopyMarkdown,
+  onCopyJson,
+}: Readonly<{
+  analysis: Analysis;
+  saved: boolean;
+  copied: boolean;
+  copiedJson: boolean;
+  onScan: () => void;
+  onBookmark: () => void;
+  onCopyMarkdown: () => void;
+  onCopyJson: () => void;
+}>): JSX.Element {
+  const { t } = useTranslation();
+  const m = analysis.masthead;
+  const geo = analysis.geo;
+  const fit = analysis.fit;
+  const apply = analysis.apply;
+  const geoClass = geoBadgeClass(geo?.verdict);
+
+  const applyLabel = (verdict: ApplyVerdict): string => {
+    if (verdict === 'yes') return t('common.yes');
+    if (verdict === 'no') return t('common.no');
+    return t('common.maybe');
+  };
+
+  return (
+    <>
+      <div className="masthead">
+        <div className="org">{m.organization || '—'}</div>
+        <div className="title">{m.title || '—'}</div>
+
+        {(fit || apply) && (
+          <div className="ratings">
+            {fit && (
+              <span className={`badge ${fitBadgeClass(fit.label)}`}>
+                {t(FIT_KEYS[fit.label] || 'triage.fit')} · {fit.score}%
+              </span>
+            )}
+            {apply && (
+              <span className={`badge ${applyBadgeClass(apply.verdict)}`}>
+                {t('triage.apply')} {applyLabel(apply.verdict)}
+              </span>
+            )}
+          </div>
+        )}
+        {fit?.rationale ? <div className="rating-note">{fit.rationale}</div> : null}
+        {apply?.rationale && apply.rationale !== fit?.rationale ? (
+          <div className="rating-note">{apply.rationale}</div>
+        ) : null}
+
+        <div className="k">{t('triage.workModel')}</div>
+        <div>{m.workModel || '—'}</div>
+        <div className="k">{t('triage.employment')}</div>
+        <div>{m.employmentTerms || '—'}</div>
+        <div className="k">{t('triage.travel')}</div>
+        <div>{m.travel || '—'}</div>
+        <div className="k">{t('triage.health')}</div>
+        <div>{m.healthInsurance || '—'}</div>
+        <div className="k">{t('triage.pay')}</div>
+        <div>{m.payRange || '—'}</div>
+        <div className="k">{t('triage.seniority')}</div>
+        <div>{m.seniority || '—'}</div>
+        {m.workAuthorization ? (
+          <>
+            <div className="k">{t('triage.workAuthorization')}</div>
+            <div>{m.workAuthorization}</div>
+          </>
+        ) : null}
+      </div>
+
+      {geo && (
+        <div className="section">
+          <h2>{t('triage.geo')}</h2>
+          <span className={`badge ${geoClass}`}>{geo.verdict}</span>
+          {geo.method === 'zip-haversine' && (
+            <span className="badge b-mid" style={{ marginLeft: 6 }}>
+              computed
+            </span>
+          )}
+          <div className="flag" style={{ borderLeft: 'none' }}>
+            <div className="why">{geo.reason}</div>
+          </div>
+        </div>
+      )}
+
+      {analysis.dealbreakers.length > 0 && (
+        <div className="section">
+          <h2>{t('triage.dealbreakers')}</h2>
+          {analysis.dealbreakers.map((d) => (
+            <div className="deal" key={`${d.requirement}|${d.reason}|${d.evidence}`}>
+              <div className="req">{d.requirement}</div>
+              {d.reason && <div className="why">{d.reason}</div>}
+              {d.evidence && <div className="ev">{d.evidence}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {analysis.skipFlags.length > 0 && (
+        <div className="section">
+          <h2>{t('triage.skipFlags')}</h2>
+          {analysis.skipFlags.map((s) => (
+            <div className="skip" key={`${s.trigger}|${s.evidence}`}>
+              <div className="req">{s.trigger}</div>
+              {s.evidence && <div className="ev">{s.evidence}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {analysis.skillMatches.length > 0 && (
+        <div className="section">
+          <h2>{t('triage.skills')}</h2>
+          {analysis.skillMatches.map((s) => (
+            <div className={`flag ${s.status}`} key={`${s.requirement}|${s.status}|${s.confidence}`}>
+              <div className="req">
+                {skillStatusMark(s.status)}
+                {s.requirement} <span className="k">({s.confidence})</span>
+              </div>
+              {s.reason && <div className="why">{s.reason}</div>}
+              {s.evidence && <div className="ev">{s.evidence}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {analysis.postingSmell && (
+        <div className="section">
+          <h2>{t('triage.postingSmell')}</h2>
+          <div className="hint">{analysis.postingSmell}</div>
+        </div>
+      )}
+
+      {analysis.declutteredJD && (
+        <div className="section">
+          <h2>{t('triage.decluttered')}</h2>
+          <div className="jd">{analysis.declutteredJD}</div>
+        </div>
+      )}
+
+      <div className="actions">
+        <button className="primary" type="button" onClick={onBookmark} disabled={saved}>
+          {saved ? t('triage.bookmarked') : t('triage.bookmark')}
+        </button>
+        <button type="button" onClick={onCopyMarkdown}>
+          {copied ? t('triage.copiedMarkdown') : t('triage.copyMarkdown')}
+        </button>
+        <button type="button" onClick={onCopyJson}>
+          {copiedJson ? t('triage.copiedJson') : t('triage.copyJson')}
+        </button>
+        <button type="button" onClick={onScan}>
+          {t('app.scan')}
+        </button>
+      </div>
+    </>
+  );
+}
 
 export function TriagePanel({
   boardName,
@@ -72,34 +274,8 @@ export function TriagePanel({
   onCopyMarkdown,
   onCopyJson,
   onOpenOptions,
-}: TriagePanelProps): JSX.Element {
+}: Readonly<TriagePanelProps>): JSX.Element {
   const { t, i18n } = useTranslation();
-  const m = analysis?.masthead;
-  const geo = analysis?.geo;
-  const fit = analysis?.fit;
-  const apply = analysis?.apply;
-  const geoClass =
-    geo?.verdict === 'eligible' ? 'b-ok' : geo?.verdict === 'excluded' ? 'b-no' : 'b-mid';
-
-  const applyLabel = (verdict: ApplyVerdict): string => {
-    if (verdict === 'yes') return t('common.yes');
-    if (verdict === 'no') return t('common.no');
-    return t('common.maybe');
-  };
-
-  const warningBanner = profileWarning ? (
-    <div
-      className={`profile-warn${profileWarningRequired ? ' profile-warn-required' : ''}`}
-      role="status"
-    >
-      <p>{profileWarning}</p>
-      {onOpenOptions ? (
-        <button type="button" className="linkish" onClick={onOpenOptions}>
-          {t('common.openOptions')}
-        </button>
-      ) : null}
-    </div>
-  ) : null;
 
   return (
     <div className="panel" dir={i18n.dir()}>
@@ -111,7 +287,11 @@ export function TriagePanel({
         </h1>
       </div>
       <div className="body">
-        {warningBanner}
+        <ProfileWarningBanner
+          message={profileWarning}
+          required={profileWarningRequired}
+          onOpenOptions={onOpenOptions}
+        />
 
         {state === 'idle' && showScanCta && (
           <div className="idle">
@@ -140,137 +320,18 @@ export function TriagePanel({
           </div>
         )}
 
-        {state === 'result' && analysis && m && (
-          <>
-            <div className="masthead">
-              <div className="org">{m.organization || '—'}</div>
-              <div className="title">{m.title || '—'}</div>
-
-              {(fit || apply) && (
-                <div className="ratings">
-                  {fit && (
-                    <span className={`badge ${fitBadgeClass(fit.label)}`}>
-                      {t(FIT_KEYS[fit.label] || 'triage.fit')} · {fit.score}%
-                    </span>
-                  )}
-                  {apply && (
-                    <span className={`badge ${applyBadgeClass(apply.verdict)}`}>
-                      {t('triage.apply')} {applyLabel(apply.verdict)}
-                    </span>
-                  )}
-                </div>
-              )}
-              {fit?.rationale ? <div className="rating-note">{fit.rationale}</div> : null}
-              {apply?.rationale && apply.rationale !== fit?.rationale ? (
-                <div className="rating-note">{apply.rationale}</div>
-              ) : null}
-
-              <div className="k">{t('triage.workModel')}</div>
-              <div>{m.workModel || '—'}</div>
-              <div className="k">{t('triage.employment')}</div>
-              <div>{m.employmentTerms || '—'}</div>
-              <div className="k">{t('triage.travel')}</div>
-              <div>{m.travel || '—'}</div>
-              <div className="k">{t('triage.health')}</div>
-              <div>{m.healthInsurance || '—'}</div>
-              <div className="k">{t('triage.pay')}</div>
-              <div>{m.payRange || '—'}</div>
-              <div className="k">{t('triage.seniority')}</div>
-              <div>{m.seniority || '—'}</div>
-              {m.workAuthorization ? (
-                <>
-                  <div className="k">{t('triage.workAuthorization')}</div>
-                  <div>{m.workAuthorization}</div>
-                </>
-              ) : null}
-            </div>
-
-            {geo && (
-              <div className="section">
-                <h2>{t('triage.geo')}</h2>
-                <span className={`badge ${geoClass}`}>{geo.verdict}</span>
-                {geo.method === 'zip-haversine' && (
-                  <span className="badge b-mid" style={{ marginLeft: 6 }}>
-                    computed
-                  </span>
-                )}
-                <div className="flag" style={{ borderLeft: 'none' }}>
-                  <div className="why">{geo.reason}</div>
-                </div>
-              </div>
-            )}
-
-            {analysis.dealbreakers.length > 0 && (
-              <div className="section">
-                <h2>{t('triage.dealbreakers')}</h2>
-                {analysis.dealbreakers.map((d, i) => (
-                  <div className="deal" key={i}>
-                    <div className="req">{d.requirement}</div>
-                    {d.reason && <div className="why">{d.reason}</div>}
-                    {d.evidence && <div className="ev">{d.evidence}</div>}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {analysis.skipFlags.length > 0 && (
-              <div className="section">
-                <h2>{t('triage.skipFlags')}</h2>
-                {analysis.skipFlags.map((s, i) => (
-                  <div className="skip" key={i}>
-                    <div className="req">{s.trigger}</div>
-                    {s.evidence && <div className="ev">{s.evidence}</div>}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {analysis.skillMatches.length > 0 && (
-              <div className="section">
-                <h2>{t('triage.skills')}</h2>
-                {analysis.skillMatches.map((s, i) => (
-                  <div className={`flag ${s.status}`} key={i}>
-                    <div className="req">
-                      {s.status === 'match' ? '✓ ' : s.status === 'partial' ? '~ ' : '✗ '}
-                      {s.requirement} <span className="k">({s.confidence})</span>
-                    </div>
-                    {s.reason && <div className="why">{s.reason}</div>}
-                    {s.evidence && <div className="ev">{s.evidence}</div>}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {analysis.postingSmell && (
-              <div className="section">
-                <h2>{t('triage.postingSmell')}</h2>
-                <div className="hint">{analysis.postingSmell}</div>
-              </div>
-            )}
-
-            {analysis.declutteredJD && (
-              <div className="section">
-                <h2>{t('triage.decluttered')}</h2>
-                <div className="jd">{analysis.declutteredJD}</div>
-              </div>
-            )}
-
-            <div className="actions">
-              <button className="primary" type="button" onClick={onBookmark} disabled={saved}>
-                {saved ? t('triage.bookmarked') : t('triage.bookmark')}
-              </button>
-              <button type="button" onClick={onCopyMarkdown}>
-                {copied ? t('triage.copiedMarkdown') : t('triage.copyMarkdown')}
-              </button>
-              <button type="button" onClick={onCopyJson}>
-                {copiedJson ? t('triage.copiedJson') : t('triage.copyJson')}
-              </button>
-              <button type="button" onClick={onScan}>
-                {t('app.scan')}
-              </button>
-            </div>
-          </>
-        )}
+        {state === 'result' && analysis?.masthead ? (
+          <TriageResultBody
+            analysis={analysis}
+            saved={saved}
+            copied={copied}
+            copiedJson={copiedJson}
+            onScan={onScan}
+            onBookmark={onBookmark}
+            onCopyMarkdown={onCopyMarkdown}
+            onCopyJson={onCopyJson}
+          />
+        ) : null}
       </div>
       {footer}
     </div>
