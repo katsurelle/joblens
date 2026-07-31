@@ -36,6 +36,7 @@ import {
   CUTSFORTH_REMOTE_EXCLUDE,
   DENVER_NATIONWIDE,
   DFW_QUARTERLY_REMOTE,
+  GITLAB_BUILTIN_REMOTE_FALSE_ONSITE,
   ITBSTAR_US_BASED_DEV,
   MADISON_NATIONWIDE,
   TURING_US_CANADA_WEU,
@@ -414,6 +415,21 @@ describe('preflight', () => {
       });
       expect(travelHard.verdict).toBe('hard_skip');
     }
+  });
+
+  it('Built In / GitLab: remote not flipped by on-site:None or HQ map', () => {
+    expect(inferWorkModelHint(GITLAB_BUILTIN_REMOTE_FALSE_ONSITE)).toBe('remote');
+    const local = runLocalPreflight({
+      cfg: makeConfig({
+        locations: [{ zip: '78758', radiusMiles: 25 }],
+        preferences: { ...DEFAULT_PREFERENCES, remoteOnly: true },
+      }),
+      pageText: GITLAB_BUILTIN_REMOTE_FALSE_ONSITE,
+      pageTitle: 'Support Engineer (AMER) - GitLab | Built In',
+    });
+    expect(local.workModelHint).toBe('remote');
+    expect(local.flags).not.toContain('remote_only');
+    expect(local.reasons.join(' ')).not.toMatch(/posting looks (onsite|hybrid)/i);
   });
 
   it('Cutsforth + Boise twin: residency + short training travel path', () => {

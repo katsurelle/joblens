@@ -1,4 +1,5 @@
 import { handleBackgroundRequest } from '../lib/backgroundHandle';
+import { openSidePanelForTab } from '../lib/sidePanel';
 import { startToolbarIconThemeSync } from '../lib/toolbarIcon';
 import { OpenSidePanelRequestSchema } from '../types/messages';
 
@@ -9,22 +10,6 @@ void chrome.sidePanel
   .catch((err: unknown) => {
     console.warn('JobLens: setPanelBehavior failed', err);
   });
-
-async function openSidePanelForTab(
-  tabId: number,
-  startScan: boolean
-): Promise<{ ok: true; data: { opened: true } } | { ok: false; error: string }> {
-  try {
-    if (startScan) {
-      await chrome.storage.session.set({ pendingScan: true, pendingScanTabId: tabId });
-    }
-    await chrome.sidePanel.open({ tabId });
-    return { ok: true, data: { opened: true } };
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: message };
-  }
-}
 
 chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
   if (

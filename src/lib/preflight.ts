@@ -41,19 +41,50 @@ const ONSITE_RE =
   /\b(?:on[\s-]?site|in[\s-]?office|in[\s-]?person|must\s+relocate|relocation\s+required)\b/i;
 const HYBRID_RE = /\bhybrid\b/i;
 
+/**
+ * Strip zero / negated onsite wording so "Typical time on-site: None" and
+ * "No one … meets in-person" do not flip remote postings to onsite/hybrid.
+ */
+const FALSE_ONSITE_STRIP_PATTERNS: readonly RegExp[] = [
+  /\btypical\s+time\s+on[\s-]?site\s*:\s*none\b/gi,
+  /\btime\s+on[\s-]?site\s*:\s*none\b/gi,
+  /\bon[\s-]?site\s*:\s*none\b/gi,
+  /\bno\s+(?:one|employee|team\s+member)s?[^.!?\n]{0,120}\bin[\s-]?person\b/gi,
+  /\b(?:does|do)\s+not\s+(?:meet|require|work|expect)[^.!?\n]{0,60}\bin[\s-]?person\b/gi,
+  /\bnever\s+(?:meet|meets|work|works)[^.!?\n]{0,40}\bin[\s-]?person\b/gi,
+];
+
 /** Prefer several simple patterns over one high-complexity alternation (Sonar). */
 function anyRe(text: string, patterns: readonly RegExp[]): boolean {
   return patterns.some((re) => re.test(text));
 }
 
+function stripFalseOnsitePhrases(pageText: string): string {
+  let t = pageText;
+  for (const re of FALSE_ONSITE_STRIP_PATTERNS) {
+    t = t.replace(re, ' ');
+  }
+  return t;
+}
+
+function hasRealOnsiteSignal(pageText: string): boolean {
+  return ONSITE_RE.test(stripFalseOnsitePhrases(pageText));
+}
+
 const REMOTE_STRONG_PATTERNS: readonly RegExp[] = [
   /\bfully\s+remote\b/i,
+  /\ball[\s-]?remote\b/i,
   /\b100%\s+remote\b/i,
   /\bremote[\s-]?first\b/i,
   /\bwork\s+from\s+home\b/i,
+  /\bwork(?:s|ing)?\s+remotely\b/i,
   /\bwfh\b/i,
+  /\btelecommute\b/i,
+  /\bjoblocationtype["\s:]*telecommute\b/i,
   /\bremote\s+ok\b/i,
   /\bremote\s+position\b/i,
+  /\bremote\s+workspace\b/i,
+  /\bremote\s+work\s+(?:environment|program|model)\b/i,
   /\bprimarily\s+remote\b/i,
 ];
 
@@ -175,7 +206,7 @@ export function detectOnsiteTravelCadence(pageText: string): OnsiteTravelCadence
   ) {
     bump('yearly');
   }
-  if (worst === 'unknown' && /\boccasional(?:ly)?\b/i.test(t) && ONSITE_RE.test(t)) {
+  if (worst === 'unknown' && /\boccasional(?:ly)?\b/i.test(t) && hasRealOnsiteSignal(t)) {
     bump('yearly');
   }
   return worst;
@@ -205,7 +236,7 @@ export function truncateForPreflight(pageText: string, cap = PREFLIGHT_TEXT_CAP)
 export function inferWorkModelHint(pageText: string): 'onsite' | 'hybrid' | 'remote' | 'unclear' {
   const remotePrimary = hasRemotePrimarySignal(pageText);
   const hasHybrid = HYBRID_RE.test(pageText);
-  const hasOnsite = ONSITE_RE.test(pageText);
+  const hasOnsite = hasRealOnsiteSignal(pageText);
   const shortTraining = hasShortOnsiteTraining(pageText);
 
   // Remote-primary + short onsite training → still remote (travel soft, not commute hybrid).

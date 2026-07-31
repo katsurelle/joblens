@@ -163,6 +163,27 @@ Primarily remote role with quarterly on-site meetings in Chicago, IL.
 Job description: lead platform architecture and mentoring.
 `.padEnd(500, ' ');
 
+/**
+ * Built In / GitLab: Remote badge + all-remote JD, but company HQ (SF) and
+ * "Typical time on-site: None" / "meets in-person" negation used to flip
+ * work-model to onsite/hybrid under remote-only preference.
+ */
+export const GITLAB_BUILTIN_REMOTE_FALSE_ONSITE = `
+Support Engineer (AMER) - GitLab | Built In
+2 Locations · Remote · Mid level
+jobLocationType: TELECOMMUTE
+How GitLab will support you
+• All remote, asynchronous work environment
+• Home office support
+GitLab Offices
+Remote Workspace
+Employees work remotely.
+All-remote means that each individual in the organization is empowered to work and live where they are most fulfilled; it makes it clear that every team member is equal. No one, not even the executive team, meets in-person on a daily basis.
+Typical time on-site: None
+San Francisco, CA
+Country Hiring Guidelines: GitLab hires new team members in countries around the world. All of our roles are remote, however some roles may carry specific location-based eligibility requirements.
+`.padEnd(500, ' ');
+
 export const MATRIX_SKILL_MATCHES = [
   {
     requirement: 'Significant experience working with modern Javascript',

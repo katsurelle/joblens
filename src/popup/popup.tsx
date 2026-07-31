@@ -1,4 +1,4 @@
-import { useState, type JSX } from 'react';
+import { useEffect, useState, type JSX } from 'react';
 import { createRoot } from 'react-dom/client';
 import { boardDisplayNames } from '../lib/boards';
 import { openSidePanel } from '../lib/messaging';
@@ -6,11 +6,19 @@ import './popup.css';
 
 function Popup(): JSX.Element {
   const [msg, setMsg] = useState('');
+  // Resolved up front: awaiting a tab query inside the click handler would drop
+  // the user gesture that chrome.sidePanel.open() requires.
+  const [tabId, setTabId] = useState<number | null>(null);
+
+  useEffect(() => {
+    void chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+      setTabId(tab?.id ?? null);
+    });
+  }, []);
 
   const scan = async (): Promise<void> => {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return;
-    const res = await openSidePanel({ startScan: true, tabId: tab.id });
+    if (tabId == null) return;
+    const res = await openSidePanel({ startScan: true, tabId });
     if (!res.ok) {
       const detail = res.error ? ` ${res.error}` : '';
       setMsg(
@@ -34,7 +42,7 @@ function Popup(): JSX.Element {
         <img className="brand-mark" src="/icons/icon32.png" width={18} height={18} alt="" />
         <span>JobLens</span>
       </div>
-      <button type="button" onClick={() => void scan()}>
+      <button type="button" onClick={() => void scan()} disabled={tabId == null}>
         Scan this page
       </button>
       <button type="button" onClick={bookmarks}>
