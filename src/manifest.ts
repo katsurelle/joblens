@@ -4,7 +4,7 @@ import { MATCH_PATTERNS } from './lib/boards';
 export default defineManifest({
   manifest_version: 3,
   name: 'JobLens',
-  version: '2.0.0',
+  version: '2.0.1',
   description:
     'AI-assisted job-posting triage: masthead, skill match/mismatch, geo eligibility, decluttered JD, configurable triage preferences.',
   icons: {
